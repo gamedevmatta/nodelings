@@ -171,8 +171,8 @@ export class PromptPanel {
     this.messagesEl.innerHTML = '';
     const buildingCount = this.game.world.getBuildings().length;
     const greeting = buildingCount > 0
-      ? `Hey! Tell me what you need — I can see you've got ${buildingCount} building${buildingCount > 1 ? 's' : ''} set up already.`
-      : `Hey! Tell me what you need done — I'll figure out the rest.`;
+      ? `Hey, Sparky here! Tell me what you need — I can see you've got ${buildingCount} building${buildingCount > 1 ? 's' : ''} set up already.`
+      : `Hey, Sparky here! Tell me what you need done — I'll figure out the rest.`;
     this.addBubble('assistant', greeting);
     this.messages.push({ role: 'assistant', text: greeting });
 

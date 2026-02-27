@@ -143,7 +143,13 @@ async function testBuild(page) {
 
   // Click Build it!
   await page.click('.pp-build-btn');
-  await new Promise(r => setTimeout(r, 500));
+
+  // Wait for post-build narration ("Done! I set up: ...")
+  await page.waitForFunction(() => {
+    const msgs = document.querySelectorAll('.pp-msg-sparky');
+    const last = msgs.length > 0 ? msgs[msgs.length - 1].textContent : '';
+    return last.includes('Done!');
+  }, { timeout: 10000 });
 
   const result = await page.evaluate(() => {
     const buildings = window.game.world.getBuildings();
@@ -153,13 +159,6 @@ async function testBuild(page) {
   const placed = result.count - initialBuildings;
   console.log(`  Built: ${result.types.join(' \u2192 ')} (${placed} buildings)`);
   assert(placed >= 2, `Expected >= 2 buildings, got ${placed}`);
-
-  // Panel should close
-  const hidden = await page.evaluate(() => {
-    const el = document.querySelector('.prompt-panel');
-    return !el || el.style.display === 'none';
-  });
-  assert(hidden, 'Panel should close after building');
   console.log('[build] PASS');
 }
 
