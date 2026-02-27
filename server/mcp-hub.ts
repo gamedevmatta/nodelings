@@ -69,9 +69,14 @@ export class MCPHub {
 
   /** Auto-connect all saved servers on startup */
   async autoConnect() {
+    if (this.configs.size === 0) {
+      console.log('[MCPHub] No servers configured in mcp-servers.json');
+      return;
+    }
     for (const [name, config] of this.configs) {
       if (!this.clients.has(name)) {
         try {
+          console.log(`[MCPHub] Auto-connecting "${name}" (${config.command} ${(config.args || []).join(' ')})...`);
           await this.connect(name, config);
         } catch (err: any) {
           console.error(`[MCPHub] Failed to auto-connect "${name}":`, err?.message ?? err);

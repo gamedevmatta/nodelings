@@ -11,4 +11,4 @@ services:
       - PORT=3001
       - CORS_ORIGIN=https://nodelings.matthewshera.com
     volumes:
-      - ./mcp-servers.json:/app/mcp-servers.json:ro
+      - ./mcp-servers.json:/app/mcp-servers.json

@@ -28,17 +28,37 @@ fi
 echo "==> Setting up .env..."
 if [ ! -f .env ]; then
   cat > .env << 'ENVEOF'
-# Add your API keys here:
+# ── AI Backend Keys ──────────────────────────────────────────────
 # ANTHROPIC_API_KEY=sk-ant-...
 # GEMINI_API_KEY=AIzaSy...
-# NOTION_TOKEN=ntn_...
+
+# ── MCP Server Tokens (passed to child processes automatically) ──
+# Notion: get from https://www.notion.so/my-integrations
+# OPENAPI_MCP_HEADERS={"Authorization":"Bearer ntn_...","Notion-Version":"2022-06-28"}
+#
+# Slack: get from https://api.slack.com/apps → OAuth & Permissions
+# SLACK_BOT_TOKEN=xoxb-...
+# SLACK_TEAM_ID=T...
 ENVEOF
   echo "  Created .env — edit it with: nano /opt/nodelings/.env"
 fi
 
 echo "==> Setting up mcp-servers.json..."
 if [ ! -f mcp-servers.json ]; then
-  echo '{}' > mcp-servers.json
+  cat > mcp-servers.json << 'MCPEOF'
+{
+  "servers": {
+    "notion": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"]
+    },
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"]
+    }
+  }
+}
+MCPEOF
 fi
 
 echo "==> Building Docker image..."
