@@ -5,6 +5,7 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': 'http://localhost:3001',
+      '/hooks': 'http://localhost:3001',
     },
   },
 });

@@ -1,4 +1,4 @@
-import { LLMBridge, type LLMProvider } from '../agent/LLMBridge';
+import { LLMBridge } from '../agent/LLMBridge';
 
 export class SettingsPanel {
   private container: HTMLElement;
@@ -17,66 +17,19 @@ export class SettingsPanel {
     this.element.innerHTML = `
       <div class="settings-header">
         <span class="settings-title">Settings</span>
-        <button class="settings-close">✕</button>
+        <button class="settings-close">\u2715</button>
       </div>
       <div class="settings-section">
-        <label class="settings-label">AI Provider</label>
-        <select class="settings-provider">
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="gemini">Google Gemini</option>
-        </select>
+        <label class="settings-label">Backend Status</label>
+        <div class="settings-status">Checking...</div>
       </div>
-      <div class="settings-section">
-        <label class="settings-label">API Key</label>
-        <input type="password" class="settings-api-key" placeholder="API key..." />
-      </div>
-      <div class="settings-section">
-        <label class="settings-label">Model</label>
-        <input type="text" class="settings-model" placeholder="gpt-4o-mini" />
-      </div>
-      <button class="settings-save">Save</button>
+      <div class="settings-note">API keys are configured on the server via environment variables (ANTHROPIC_API_KEY or GEMINI_API_KEY in .env).</div>
       <div class="settings-divider"></div>
       <button class="settings-mcp-btn">MCP Servers</button>
-      <div class="settings-note">Without an API key, the game uses pattern-matching fallback mode.</div>
     `;
 
     this.applyStyles();
     this.container.appendChild(this.element);
-
-    // Populate current values
-    const providerEl = this.element.querySelector('.settings-provider') as HTMLSelectElement;
-    const keyEl = this.element.querySelector('.settings-api-key') as HTMLInputElement;
-    const modelEl = this.element.querySelector('.settings-model') as HTMLInputElement;
-
-    providerEl.value = llm.provider;
-    keyEl.value = llm.apiKey;
-    modelEl.value = llm.model;
-
-    const updatePlaceholder = () => {
-      const placeholders: Record<string, string> = {
-        openai: 'gpt-4o-mini',
-        anthropic: 'claude-sonnet-4-20250514',
-        gemini: 'gemini-2.0-flash',
-      };
-      const keyPlaceholders: Record<string, string> = {
-        openai: 'sk-...',
-        anthropic: 'sk-ant-...',
-        gemini: 'AIzaSy...',
-      };
-      modelEl.placeholder = placeholders[providerEl.value] || 'model name';
-      keyEl.placeholder = keyPlaceholders[providerEl.value] || 'API key...';
-    };
-    providerEl.addEventListener('change', updatePlaceholder);
-    updatePlaceholder();
-
-    this.element.querySelector('.settings-save')!.addEventListener('click', () => {
-      llm.provider = providerEl.value as LLMProvider;
-      llm.apiKey = keyEl.value.trim();
-      llm.model = modelEl.value.trim() || llm.defaultModel();
-      llm.saveSettings();
-      this.hide();
-    });
 
     this.element.querySelector('.settings-close')!.addEventListener('click', () => this.hide());
 
@@ -96,11 +49,36 @@ export class SettingsPanel {
   show() {
     this.visible = true;
     this.element.style.display = 'flex';
+    this.checkBackendStatus();
   }
 
   hide() {
     this.visible = false;
     this.element.style.display = 'none';
+  }
+
+  private async checkBackendStatus() {
+    const statusEl = this.element.querySelector('.settings-status') as HTMLElement;
+    try {
+      const res = await fetch('/api/health', { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) {
+        statusEl.textContent = 'Server unreachable';
+        statusEl.style.color = '#f87171';
+        return;
+      }
+      const data = await res.json();
+      const backend = data.activeBackend;
+      if (backend) {
+        statusEl.textContent = `Connected — ${backend === 'gemini' ? 'Gemini' : 'Anthropic'} (${data.mcpTools} MCP tools)`;
+        statusEl.style.color = '#4ecdc4';
+      } else {
+        statusEl.textContent = 'No API key configured on server';
+        statusEl.style.color = '#fbbf24';
+      }
+    } catch {
+      statusEl.textContent = 'Server offline — using fallback mode';
+      statusEl.style.color = '#f87171';
+    }
   }
 
   private applyStyles() {
@@ -161,40 +139,15 @@ export class SettingsPanel {
         color: #94a3b8;
         font-weight: 600;
       }
-      .settings-provider, .settings-api-key, .settings-model {
+      .settings-status {
+        font-size: 13px;
+        font-family: 'JetBrains Mono', monospace;
+        color: #94a3b8;
+        padding: 10px 12px;
         background: rgba(15,23,42,0.8);
         border: 1px solid rgba(255,255,255,0.08);
         border-radius: 10px;
-        padding: 10px 12px;
-        color: #e2e8f0;
-        font-size: 13px;
-        font-family: 'JetBrains Mono', monospace;
-        outline: none;
-        transition: all 0.15s ease;
       }
-      .settings-provider { font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif; }
-      .settings-provider:focus, .settings-api-key:focus, .settings-model:focus {
-        border-color: rgba(78,205,196,0.4);
-        box-shadow: 0 0 12px rgba(78,205,196,0.1);
-      }
-      .settings-save {
-        background: linear-gradient(135deg, #4ecdc4, #44b8b0);
-        border: none;
-        border-radius: 10px;
-        padding: 12px;
-        color: #0f172a;
-        font-weight: 600;
-        font-size: 13px;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        letter-spacing: 0.3px;
-      }
-      .settings-save:hover {
-        filter: brightness(1.1);
-        transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(78,205,196,0.2);
-      }
-      .settings-save:active { transform: translateY(0); }
       .settings-divider {
         height: 1px;
         background: rgba(255,255,255,0.06);

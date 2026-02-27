@@ -3,186 +3,36 @@ import type { GraphNode } from './nodes';
 
 export type LLMProvider = 'openai' | 'anthropic' | 'gemini';
 
-const SYSTEM_PROMPT = `You are a behavior graph generator for a game character called a "Nodeling".
-Given a natural language instruction and world context, produce a JSON behavior graph.
-
-Available node types:
-- sensor: Read world state. params: { target: "webhook_contents"|"llm_state"|"nearby_items"|"carrying", filter: "<item_type>" }
-- move: Walk to a location. params: { target: "<building_type>", targetX: <number>, targetY: <number> }
-- pickup: Take an item. params: { itemType: "<item_type>", fromBuilding: "<building_type>" }
-- drop: Place an item. params: { intoBuilding: "<building_type>" or "ground" }
-- place_building: Create a new building on the grid. params: { buildingType: "<building_type>", atX: <number>, atY: <number> }
-- ifelse: Conditional. params: { condition: "carrying_item"|"building_has_item"|"llm_done", value: "<check_value>" }
-- loop: Repeat from this point. params: { count: <number or -1 for infinite> }
-- wait: Pause. params: { ticks: <number, 30=1sec> }
-- log: Append a short status update to the ticket thread. Record progress, decisions, or blockers. params: { message: "<string>" }
-
-Building types: gpu_core, llm_node, webhook, image_gen, deploy_node, schedule, email_trigger, if_node, switch_node, merge_node, wait_node, http_request, set_node, code_node, gmail, slack, google_sheets, notion, airtable, whatsapp, scraper, ai_agent, llm_chain
-Item types: prompt, completion
-
-Output ONLY valid JSON in this format:
-{
-  "nodes": [
-    { "id": 1, "type": "<type>", "label": "<short description>", "params": {...}, "next": 2 },
-    { "id": 2, "type": "<type>", "label": "<short description>", "params": {...}, "next": null }
-  ]
-}
-
-Rules:
-- Each node has a unique numeric id starting from 1
-- "next" points to the next node id, or null if it's the last
-- For ifelse, include "altNext" for the false branch
-- For loop, "next" is the first node in the loop body, and the last node in the body should have "next" pointing back to the loop node
-- Keep graphs simple (2-12 nodes)
-- Use move before pickup/drop to walk to the right station
-- Use place_building to create new buildings. The nodeling should move to the location first, then place. Space buildings 3 tiles apart in a row (e.g. x=3,6,9,12 at y=5). Check the world context to avoid placing on occupied tiles.
-- Use log nodes to record what you are doing and why — insert them at key moments (start of task, after each major step, on completion)`;
-
 export class LLMBridge {
-  provider: LLMProvider = 'openai';
-  apiKey = '';
+  provider: LLMProvider = 'anthropic';
   model = '';
 
-  constructor() {
-    // Load saved settings
-    this.apiKey = localStorage.getItem('nodelings_api_key') || '';
-    this.provider = (localStorage.getItem('nodelings_provider') as LLMProvider) || 'openai';
-    this.model = localStorage.getItem('nodelings_model') || '';
-  }
-
-  saveSettings() {
-    localStorage.setItem('nodelings_api_key', this.apiKey);
-    localStorage.setItem('nodelings_provider', this.provider);
-    localStorage.setItem('nodelings_model', this.model);
-  }
-
-  hasApiKey(): boolean {
-    return this.apiKey.length > 0;
-  }
-
-  /** Return the default model for the current provider */
-  defaultModel(): string {
-    switch (this.provider) {
-      case 'openai': return 'gpt-4o-mini';
-      case 'anthropic': return 'claude-sonnet-4-20250514';
-      case 'gemini': return 'gemini-2.0-flash';
-      default: return 'gpt-4o-mini';
-    }
-  }
-
   async generateGraph(prompt: string, context: string): Promise<NodeGraph | null> {
-    // Try fallback first if no API key
-    if (!this.hasApiKey()) {
-      return this.fallbackGenerate(prompt);
-    }
-
+    // Try server-side generation first
     try {
-      const userMessage = `World context:\n${context}\n\nInstruction: "${prompt}"`;
-
-      if (this.provider === 'openai') {
-        return await this.callOpenAI(userMessage);
-      } else if (this.provider === 'gemini') {
-        return await this.callGemini(userMessage);
-      } else {
-        return await this.callAnthropic(userMessage);
-      }
-    } catch (err) {
-      console.error('LLM call failed, using fallback:', err);
-      return this.fallbackGenerate(prompt);
-    }
-  }
-
-  private async callOpenAI(userMessage: string): Promise<NodeGraph | null> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
-        ],
-        temperature: 0.3,
-        max_tokens: 1000,
-      }),
-    });
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-    return this.parseGraphJSON(content);
-  }
-
-  private async callAnthropic(userMessage: string): Promise<NodeGraph | null> {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: this.model || 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: SYSTEM_PROMPT,
-        messages: [
-          { role: 'user', content: userMessage },
-        ],
-      }),
-    });
-
-    const data = await response.json();
-    const content = data.content?.[0]?.text || '';
-    return this.parseGraphJSON(content);
-  }
-
-  private async callGemini(userMessage: string): Promise<NodeGraph | null> {
-    const model = this.model || 'gemini-2.0-flash';
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`,
-      {
+      const res = await fetch('/api/generate-graph', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ parts: [{ text: userMessage }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 1000,
-          },
-        }),
-      },
-    );
+        body: JSON.stringify({ prompt, context }),
+        signal: AbortSignal.timeout(30_000),
+      });
 
-    const data = await response.json();
-    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    return this.parseGraphJSON(content);
-  }
-
-  private parseGraphJSON(text: string): NodeGraph | null {
-    // Extract JSON from possible markdown code block
-    let jsonStr = text;
-    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      jsonStr = codeBlockMatch[1];
-    }
-
-    // Try to find JSON object
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
-
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.nodes && Array.isArray(parsed.nodes)) {
-        return NodeGraph.fromJSON(parsed);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.graph?.nodes && Array.isArray(data.graph.nodes)) {
+          return NodeGraph.fromJSON(data.graph);
+        }
       }
-    } catch (e) {
-      console.error('Failed to parse graph JSON:', e);
+
+      // 503 = no API key on server, fall through to local fallback
+      if (res.status !== 503) {
+        console.warn('[LLMBridge] Server returned', res.status);
+      }
+    } catch (err) {
+      console.warn('[LLMBridge] Server call failed, using fallback:', err);
     }
-    return null;
+
+    return this.fallbackGenerate(prompt);
   }
 
   /** Fallback: pattern-match common prompts to pre-built graphs */
@@ -298,7 +148,7 @@ export class LLMBridge {
       });
     }
 
-    // "build/place/setup/create" + building keywords → place_building nodes
+    // "build/place/setup/create" + building keywords
     if (p.match(/build|place|setup|set\s*up|create/) && p.match(/node|building|workflow|pipeline|station/)) {
       const buildingKeywords: [string, string][] = [
         ['webhook', 'webhook'], ['inbox', 'webhook'],
@@ -321,9 +171,6 @@ export class LLMBridge {
         }
       }
 
-      // For "workflow"/"pipeline" prompts: if only integration buildings (notion, slack, etc.)
-      // are listed, don't inject extra nodes — the nodeling handles the thinking.
-      // Otherwise ensure we have input → processor → output.
       const integrationTypes = ['notion', 'slack', 'gmail', 'google_sheets', 'airtable', 'whatsapp', 'scraper'];
       const allIntegration = toPlace.length > 0 && toPlace.every(t => integrationTypes.includes(t));
 
@@ -343,7 +190,6 @@ export class LLMBridge {
         }
       }
 
-      // Default: webhook → ai_agent → deploy_node
       if (toPlace.length === 0) {
         toPlace.push('webhook', 'ai_agent', 'deploy_node');
       }
@@ -353,7 +199,6 @@ export class LLMBridge {
 
       nodes.push({ id: id++, type: 'log', label: 'Starting build', params: { message: `Building ${toPlace.length} node(s): ${toPlace.join(', ')}` }, next: id } as GraphNode);
 
-      // Place buildings vertically stacked in a column at x=5, one tile apart
       const startY = Math.max(1, Math.floor((12 - toPlace.length) / 2));
       for (let i = 0; i < toPlace.length; i++) {
         const x = 5;
@@ -368,7 +213,7 @@ export class LLMBridge {
       return NodeGraph.fromJSON({ nodes });
     }
 
-    // Full workflow: "run the workflow" / "do the full loop" (but NOT "build a workflow")
+    // Full workflow
     if ((p.match(/full|everything|whole/) || p.match(/run|do|start/) && p.match(/workflow|pipeline/)) || (p.match(/pick/) && p.match(/deliver|deploy/))) {
       return NodeGraph.fromJSON({
         nodes: [

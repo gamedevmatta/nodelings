@@ -303,6 +303,7 @@ export class PromptPanel {
           messages: this.messages,
           worldContext: { buildings, mcpServers, mcpTools },
         }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (res.status === 503) {
@@ -379,6 +380,7 @@ export class PromptPanel {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task }),
+        signal: AbortSignal.timeout(90_000),
       });
 
       this.setWorking(false);

@@ -907,6 +907,7 @@ export class Game {
           nodelingName: nodeling.name,
           ticketHistory: this.ticketStore.getLast(nodeling.id)?.entries ?? [],
         }),
+        signal: AbortSignal.timeout(30_000),
       });
       if (!res.ok) return `Sensor request failed (${res.status})`;
       const { summary } = await res.json() as { summary: string };
@@ -1392,7 +1393,7 @@ export class Game {
   /** Register a webhook path with the backend server */
   private async registerWebhookPath(buildingId: number, path: string, secret: string) {
     try {
-      await fetch('http://localhost:3001/api/webhook/register', {
+      await fetch('/api/webhook/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, secret, buildingId }),
@@ -1406,7 +1407,7 @@ export class Game {
   /** Poll a webhook building's path for incoming data */
   private async pollWebhook(building: Building, path: string) {
     try {
-      const res = await fetch(`http://localhost:3001/api/webhook/poll?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`/api/webhook/poll?path=${encodeURIComponent(path)}`);
       if (!res.ok) return;
       const data = await res.json() as { items: { payload: string; timestamp: number; source: string }[] };
       if (!data.items || data.items.length === 0) return;
@@ -1500,14 +1501,13 @@ export class Game {
     this.world.onCompletionProduced?.();
   }
 
-  /** Send building work to backend or client-side LLM */
+  /** Send building work to backend */
   private async processBuilding(building: Building) {
     const config = this.nodeInfoPanel.getBuildingConfig(building.id);
     const payload = building.processingPayload;
 
     try {
-      // Try backend first
-      const res = await fetch('http://localhost:3001/api/process', {
+      const res = await fetch('/api/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1515,103 +1515,18 @@ export class Game {
           inputPayload: payload,
           buildingConfig: config,
         }),
+        signal: AbortSignal.timeout(90_000),
       });
       if (res.ok) {
         const data = await res.json() as { outputPayload: string; metadata?: Record<string, any> };
         building.completeAsync(data.outputPayload || '', data.metadata);
         return;
       }
-    } catch {
-      // Backend not available — fall through to client-side
+    } catch (err) {
+      console.error('[processBuilding] Backend call failed:', err);
     }
 
-    // Fallback: try client-side LLM call
-    if (this.llm.hasApiKey()) {
-      try {
-        const result = await this.clientSideProcess(building.buildingType, payload, config);
-        building.completeAsync(result);
-        return;
-      } catch (err) {
-        console.error('Client-side processing failed:', err);
-      }
-    }
-
-    // Final fallback: echo the input
+    // Fallback: echo the input
     building.completeAsync(`[Processed] ${payload}`);
-  }
-
-  /** Direct client-side LLM call as fallback when backend is unavailable */
-  private async clientSideProcess(
-    buildingType: string,
-    payload: string,
-    config: Record<string, string>,
-  ): Promise<string> {
-    let systemPrompt = config.systemPrompt || config.prompt || '';
-
-    if (buildingType === 'llm_chain') {
-      const tone = config.tone || 'Friendly';
-      systemPrompt = systemPrompt || `Rewrite the following in a ${tone.toLowerCase()} tone.`;
-    }
-    if (buildingType === 'ai_agent') {
-      systemPrompt = systemPrompt || 'You are a helpful AI agent. Think step by step.';
-    }
-    if (!systemPrompt) {
-      systemPrompt = 'You are a helpful assistant. Respond concisely.';
-    }
-
-    if (this.llm.provider === 'gemini') {
-      const model = this.llm.model || 'gemini-2.0-flash';
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.llm.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemPrompt }] },
-            contents: [{ parts: [{ text: payload }] }],
-            generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
-          }),
-        },
-      );
-      const data = await res.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else if (this.llm.provider === 'openai') {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.llm.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.llm.model || 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: payload },
-          ],
-          temperature: 0.7,
-          max_tokens: 1024,
-        }),
-      });
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content || '';
-    } else {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': this.llm.apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: this.llm.model || 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: payload }],
-        }),
-      });
-      const data = await res.json();
-      return data.content?.[0]?.text || '';
-    }
   }
 }

@@ -1,12 +1,27 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import { MCPHub } from './mcp-hub.js';
 
 const app = express();
-app.use(cors());
+
+// ── CORS — restrict in production ────────────────────────────────────────────
+const corsOrigin = process.env.CORS_ORIGIN; // e.g. "https://nodelings.example.com"
+app.use(cors(corsOrigin ? { origin: corsOrigin } : undefined));
+
 app.use(express.json());
+
+// ── Rate limiting ────────────────────────────────────────────────────────────
+const apiLimiter = rateLimit({
+  windowMs: 60_000,       // 1 minute
+  max: 30,                // 30 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please wait a moment.' },
+});
+app.use('/api/', apiLimiter);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const mcpHub = new MCPHub();
@@ -549,6 +564,102 @@ function parseConversationJSON(text: string): any {
   }
 }
 
+// ── /api/generate-graph — server-side behavior graph generation ───────────────
+// Replaces client-side LLMBridge calls that exposed API keys in the browser.
+
+const GRAPH_SYSTEM_PROMPT = `You are a behavior graph generator for a game character called a "Nodeling".
+Given a natural language instruction and world context, produce a JSON behavior graph.
+
+Available node types:
+- sensor: Read world state. params: { target: "webhook_contents"|"llm_state"|"nearby_items"|"carrying", filter: "<item_type>" }
+- move: Walk to a location. params: { target: "<building_type>", targetX: <number>, targetY: <number> }
+- pickup: Take an item. params: { itemType: "<item_type>", fromBuilding: "<building_type>" }
+- drop: Place an item. params: { intoBuilding: "<building_type>" or "ground" }
+- place_building: Create a new building on the grid. params: { buildingType: "<building_type>", atX: <number>, atY: <number> }
+- ifelse: Conditional. params: { condition: "carrying_item"|"building_has_item"|"llm_done", value: "<check_value>" }
+- loop: Repeat from this point. params: { count: <number or -1 for infinite> }
+- wait: Pause. params: { ticks: <number, 30=1sec> }
+- log: Append a short status update to the ticket thread. params: { message: "<string>" }
+
+Building types: gpu_core, llm_node, webhook, image_gen, deploy_node, schedule, email_trigger, if_node, switch_node, merge_node, wait_node, http_request, set_node, code_node, gmail, slack, google_sheets, notion, airtable, whatsapp, scraper, ai_agent, llm_chain
+Item types: prompt, completion
+
+Output ONLY valid JSON in this format:
+{
+  "nodes": [
+    { "id": 1, "type": "<type>", "label": "<short description>", "params": {...}, "next": 2 },
+    { "id": 2, "type": "<type>", "label": "<short description>", "params": {...}, "next": null }
+  ]
+}
+
+Rules:
+- Each node has a unique numeric id starting from 1
+- "next" points to the next node id, or null if it's the last
+- For ifelse, include "altNext" for the false branch
+- For loop, "next" is the first node in the loop body, and the last node in the body should have "next" pointing back to the loop node
+- Keep graphs simple (2-12 nodes)
+- Use move before pickup/drop to walk to the right station
+- Use place_building to create new buildings. The nodeling should move to the location first, then place. Space buildings 3 tiles apart in a row (e.g. x=3,6,9,12 at y=5). Check the world context to avoid placing on occupied tiles.
+- Use log nodes to record what you are doing and why`;
+
+app.post('/api/generate-graph', async (req, res) => {
+  const { prompt, context } = req.body as { prompt?: string; context?: string };
+  if (!prompt || typeof prompt !== 'string') {
+    res.status(400).json({ error: 'Missing prompt' });
+    return;
+  }
+
+  const backend = getBackend();
+  if (!backend) {
+    res.status(503).json({ error: 'No AI API key configured on server' });
+    return;
+  }
+
+  const userMessage = `World context:\n${context || '(none)'}\n\nInstruction: "${prompt}"`;
+
+  try {
+    let responseText = '';
+
+    if (backend === 'gemini') {
+      const result = await callGemini('gemini-2.0-flash', GRAPH_SYSTEM_PROMPT, userMessage, 1000);
+      responseText = result.text;
+    } else {
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1000,
+        system: GRAPH_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      responseText = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map(b => b.text)
+        .join('');
+    }
+
+    // Parse JSON from response (handles markdown code blocks)
+    let jsonStr = responseText;
+    const codeBlock = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlock) jsonStr = codeBlock[1];
+    const jsonObj = jsonStr.match(/\{[\s\S]*\}/);
+    if (!jsonObj) {
+      res.status(422).json({ error: 'AI did not return valid graph JSON' });
+      return;
+    }
+    const parsed = JSON.parse(jsonObj[0]);
+    if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
+      res.status(422).json({ error: 'AI response missing nodes array' });
+      return;
+    }
+
+    res.json({ graph: parsed });
+  } catch (err: any) {
+    console.error('[/api/generate-graph] error:', err?.message ?? err);
+    res.status(500).json({ error: err?.message ?? 'Graph generation failed' });
+  }
+});
+
+// ── /api/conversation ────────────────────────────────────────────────────────
+
 app.post('/api/conversation', async (req, res) => {
   const { messages, worldContext }: ConversationRequest = req.body;
 
@@ -1036,11 +1147,17 @@ const webhookRegistrations = new Map<string, WebhookRegistration>();
 /** Total received count per path (never resets) */
 const webhookTotalCounts = new Map<string, number>();
 
-/** Normalize a webhook path: ensure leading slash, strip trailing slash */
+/** Normalize a webhook path: ensure leading slash, strip trailing slash, sanitize */
 function normalizePath(raw: string): string {
   let p = raw.trim();
+  // Strip path traversal and null bytes
+  p = p.replace(/\.\./g, '').replace(/\0/g, '');
+  // Only allow alphanumeric, hyphens, underscores, slashes
+  p = p.replace(/[^a-zA-Z0-9\-_/]/g, '');
   if (!p.startsWith('/')) p = '/' + p;
   if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+  // Limit path length
+  if (p.length > 128) p = p.slice(0, 128);
   return p;
 }
 
@@ -1148,8 +1265,21 @@ function enqueueWebhook(path: string, payload: string, source: string) {
   console.log(`[Webhook] ← ${path} (${payload.length} bytes from ${source}) [${queue.length} queued]`);
 }
 
+// Allowed building types for validation
+const ALLOWED_BUILDING_TYPES = new Set([
+  'gpu_core', 'llm_node', 'webhook', 'image_gen', 'deploy_node', 'schedule',
+  'email_trigger', 'if_node', 'switch_node', 'merge_node', 'wait_node',
+  'http_request', 'set_node', 'code_node', 'gmail', 'slack', 'google_sheets',
+  'notion', 'airtable', 'whatsapp', 'scraper', 'ai_agent', 'llm_chain',
+]);
+
 app.post('/api/process', async (req, res) => {
   const { buildingType, inputPayload, buildingConfig }: ProcessRequest = req.body;
+
+  if (!buildingType || !ALLOWED_BUILDING_TYPES.has(buildingType)) {
+    res.status(400).json({ error: `Invalid building type: ${String(buildingType).slice(0, 50)}` });
+    return;
+  }
 
   try {
     let result: { outputPayload: string; metadata: Record<string, any> };

@@ -57,7 +57,7 @@ export class MCPPanel {
 
   async refresh() {
     try {
-      const res = await fetch('http://localhost:3001/api/mcp/status');
+      const res = await fetch('/api/mcp/status');
       if (res.ok) {
         const data = await res.json();
         this.servers = data.servers || [];
@@ -185,7 +185,7 @@ export class MCPPanel {
         btn.disabled = true;
         btn.textContent = action === 'disconnect' ? 'Disconnecting...' : 'Connecting...';
         try {
-          await fetch(`http://localhost:3001/api/mcp/${action === 'disconnect' ? 'disconnect' : 'connect'}`, {
+          await fetch(`/api/mcp/${action === 'disconnect' ? 'disconnect' : 'connect'}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(
@@ -202,7 +202,7 @@ export class MCPPanel {
       card.querySelector('.mcp-srv-remove')!.addEventListener('click', async (e) => {
         e.stopPropagation();
         try {
-          await fetch('http://localhost:3001/api/mcp/remove', {
+          await fetch('/api/mcp/remove', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
@@ -245,7 +245,7 @@ export class MCPPanel {
     this.setStatus('Connecting...', false);
 
     try {
-      const res = await fetch('http://localhost:3001/api/mcp/connect', {
+      const res = await fetch('/api/mcp/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, command, args, env }),

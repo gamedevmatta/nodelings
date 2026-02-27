@@ -440,7 +440,7 @@ export class NodeInfoPanel {
       return this.mcpCache.servers;
     }
     try {
-      const res = await fetch('http://localhost:3001/api/mcp/status');
+      const res = await fetch('/api/mcp/status');
       if (!res.ok) return [];
       const data = await res.json() as { servers: MCPStatusCache['servers'] };
       this.mcpCache = { timestamp: Date.now(), servers: data.servers || [] };
@@ -668,7 +668,7 @@ export class NodeInfoPanel {
       let webhookURLHTML = '';
       if (path) {
         const normalized = path.startsWith('/') ? path : '/' + path;
-        const fullUrl = `http://localhost:3001/hooks${normalized}`;
+        const fullUrl = `${window.location.origin}/hooks${normalized}`;
         webhookURLHTML = `
           <div class="nip-webhook-url-wrap">
             <label class="nip-field-label">Webhook URL</label>
@@ -770,23 +770,24 @@ export class NodeInfoPanel {
 
   private buildFieldHTML(inp: NodeInput, config: Record<string, string>): string {
     const value = config[inp.key] ?? inp.default ?? '';
+    const safeValue = this.escapeHtml(value);
 
     if (inp.type === 'select') {
       const opts = (inp.options ?? [])
-        .map(o => `<option value="${o}"${value === o ? ' selected' : ''}>${o}</option>`)
+        .map(o => { const so = this.escapeHtml(o); return `<option value="${so}"${value === o ? ' selected' : ''}>${so}</option>`; })
         .join('');
       return `
         <div class="nip-field">
-          <label class="nip-field-label">${inp.label}</label>
-          <select class="nip-select" data-key="${inp.key}">${opts}</select>
+          <label class="nip-field-label">${this.escapeHtml(inp.label)}</label>
+          <select class="nip-select" data-key="${this.escapeHtml(inp.key)}">${opts}</select>
         </div>`;
     }
 
     if (inp.type === 'textarea') {
       return `
         <div class="nip-field">
-          <label class="nip-field-label">${inp.label}</label>
-          <textarea class="nip-textarea" data-key="${inp.key}" placeholder="${inp.placeholder ?? ''}">${value}</textarea>
+          <label class="nip-field-label">${this.escapeHtml(inp.label)}</label>
+          <textarea class="nip-textarea" data-key="${this.escapeHtml(inp.key)}" placeholder="${this.escapeHtml(inp.placeholder ?? '')}">${safeValue}</textarea>
         </div>`;
     }
 
@@ -794,27 +795,27 @@ export class NodeInfoPanel {
       const on = value === 'true' || (value === '' && inp.default === 'true');
       return `
         <div class="nip-field nip-field--inline">
-          <label class="nip-field-label">${inp.label}</label>
+          <label class="nip-field-label">${this.escapeHtml(inp.label)}</label>
           <button class="nip-toggle ${on ? 'nip-toggle--on' : 'nip-toggle--off'}"
-                  data-key="${inp.key}" data-value="${on}">${on ? 'ON' : 'OFF'}</button>
+                  data-key="${this.escapeHtml(inp.key)}" data-value="${on}">${on ? 'ON' : 'OFF'}</button>
         </div>`;
     }
 
     if (inp.type === 'number') {
       return `
         <div class="nip-field">
-          <label class="nip-field-label">${inp.label}</label>
+          <label class="nip-field-label">${this.escapeHtml(inp.label)}</label>
           <input class="nip-input nip-input--number" type="number"
-                 data-key="${inp.key}" placeholder="${inp.placeholder ?? ''}" value="${value}" />
+                 data-key="${this.escapeHtml(inp.key)}" placeholder="${this.escapeHtml(inp.placeholder ?? '')}" value="${safeValue}" />
         </div>`;
     }
 
     // text (default)
     return `
       <div class="nip-field">
-        <label class="nip-field-label">${inp.label}</label>
+        <label class="nip-field-label">${this.escapeHtml(inp.label)}</label>
         <input class="nip-input" type="text"
-               data-key="${inp.key}" placeholder="${inp.placeholder ?? ''}" value="${value}" />
+               data-key="${this.escapeHtml(inp.key)}" placeholder="${this.escapeHtml(inp.placeholder ?? '')}" value="${safeValue}" />
       </div>`;
   }
 
