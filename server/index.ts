@@ -514,7 +514,10 @@ User: "summarize my emails"
 You: {"reply": "Let me check your emails.", "options": [], "done": true, "action": "execute", "task": "Summarize the user's recent emails."}
 
 User: "set up a webhook to process data every hour"
-You: {"reply": "I'll build that.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "schedule", "config": {"frequency": "Every hour"}}, {"type": "llm_node", "config": {"systemPrompt": "Process data"}}, {"type": "deploy_node", "config": {}}], "description": "Hourly data processor"}}
+You: {"reply": "I'll build that.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "schedule", "config": {"frequency": "Every hour"}}, {"type": "ai_agent", "config": {"systemPrompt": "Process incoming data"}}, {"type": "deploy_node", "config": {}}], "description": "Hourly data processor"}}
+
+User: "read my Notion tasks and send a summary to Slack"
+You: {"reply": "I'll set that up.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "schedule", "config": {"frequency": "Every day"}}, {"type": "notion", "config": {"action": "Query tasks"}}, {"type": "slack", "config": {"action": "Post summary"}}, {"type": "deploy_node", "config": {}}], "description": "Notion tasks to Slack digest"}}
 
 ## RULES
 
