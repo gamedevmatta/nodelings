@@ -16,14 +16,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm install tsx
 
-# Pre-install common MCP server packages so they're available instantly
-# (npx -y will find them without downloading at runtime)
+# Pre-install MCP server packages so npx doesn't download at runtime
 RUN npm install -g \
   @notionhq/notion-mcp-server \
-  @modelcontextprotocol/server-slack \
-  @modelcontextprotocol/server-filesystem \
-  @modelcontextprotocol/server-fetch \
-  @modelcontextprotocol/server-memory
+  @modelcontextprotocol/server-slack
 
 # Copy built frontend + server source
 COPY --from=build /app/dist ./dist
