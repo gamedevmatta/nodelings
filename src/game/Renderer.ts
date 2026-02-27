@@ -272,27 +272,11 @@ export class Renderer {
     if (icon && icon.complete && icon.naturalWidth > 0) {
       const iconSize = platSize * 0.52;
       const iconX = screen.x - iconSize / 2;
-      const iconY = screen.y - iconSize / 2 - 2 * z;
+      const iconY = screen.y - iconSize / 2;
       this.ctx.globalAlpha = lightMul * 0.9;
       this.ctx.drawImage(icon, iconX, iconY, iconSize, iconSize);
       this.ctx.globalAlpha = 1;
     }
-
-    // Building label below icon
-    this.ctx.fillStyle = `rgba(255,255,255,${0.6 * lightMul})`;
-    this.ctx.font = `${8 * z}px Bungee, 'Segoe UI', system-ui, sans-serif`;
-    this.ctx.textAlign = 'center';
-    const labels: Record<string, string> = {
-      gpu_core: 'GPU Core', llm_node: 'LLM', webhook: 'Webhook',
-      image_gen: 'Image Gen', deploy_node: 'Deploy',
-      schedule: 'Trigger', email_trigger: 'Email',
-      if_node: 'Decide', switch_node: 'Switch', merge_node: 'Merge', wait_node: 'Wait',
-      http_request: 'Send', set_node: 'Transform', code_node: 'Code',
-      gmail: 'Read', slack: 'Slack', google_sheets: 'Sheets', notion: 'Notion', airtable: 'Airtable',
-      whatsapp: 'WhatsApp', scraper: 'Search',
-      ai_agent: 'Think', llm_chain: 'Humanize',
-    };
-    this.ctx.fillText(labels[building.buildingType] || '', screen.x, screen.y + platSize * 0.32);
 
     // Processing indicator — progress bar for processor buildings
     if (building.processing && building.isProcessor()) {
