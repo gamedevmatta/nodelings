@@ -1435,9 +1435,25 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// ── Static file serving (production) ─────────────────────────────────────────
+
+import path from 'path';
+import fs from 'fs';
+
+const distPath = path.join(process.cwd(), 'dist');
+
+// Serve Vite-built frontend if dist/ exists (production mode)
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // SPA fallback: serve index.html for non-API routes
+  app.get('/{*splat}', (_req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
 // ── Start ────────────────────────────────────────────────────────────────────
 
-const PORT = 3001;
+const PORT = parseInt(process.env.PORT || '3001', 10);
 app.listen(PORT, async () => {
   console.log(`[nodelings-server] listening on http://localhost:${PORT}`);
   console.log(`  Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓' : '✗ missing'}`);

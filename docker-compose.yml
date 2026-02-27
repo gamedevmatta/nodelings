@@ -1,0 +1,14 @@
+services:
+  nodelings:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - CORS_ORIGIN=https://nodelings.matthewshera.com
+    volumes:
+      - ./mcp-servers.json:/app/mcp-servers.json:ro

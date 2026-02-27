@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+.claude
+*.png
+mcp-servers.json
+channels.json
+server.log
+.git
