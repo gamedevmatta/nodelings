@@ -849,7 +849,7 @@ async function processAIAgent(
   config: Record<string, string>,
 ): Promise<{ outputPayload: string; metadata: Record<string, any> }> {
   const systemPrompt = config.systemPrompt || config.prompt ||
-    'You are a helpful AI agent with access to external tools. Think step by step. Use available tools to gather information or take actions as needed. Provide a thorough response.';
+    'You are a proactive AI agent. Use your tools to COMPLETE the task — do not ask the user for IDs, names, or details you can look up yourself. Search for databases, channels, pages, etc. using the tools available. If unsure which resource, pick the most likely one and proceed. Be concise in your final response.';
   const maxSteps = parseInt(config.maxSteps || '10', 10);
 
   const backend = getBackend();
