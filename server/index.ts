@@ -1154,11 +1154,13 @@ function normalizePath(raw: string): string {
   p = p.replace(/\.\./g, '').replace(/\0/g, '');
   // Only allow alphanumeric, hyphens, underscores, slashes
   p = p.replace(/[^a-zA-Z0-9\-_/]/g, '');
+  // Collapse multiple slashes
+  p = p.replace(/\/+/g, '/');
   if (!p.startsWith('/')) p = '/' + p;
   if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
   // Limit path length
   if (p.length > 128) p = p.slice(0, 128);
-  return p;
+  return p || '/';
 }
 
 /** HMAC-SHA256 verification (async, uses Web Crypto API) */
