@@ -2,7 +2,7 @@ import { Camera } from './Camera';
 import { Input } from './Input';
 import { Renderer } from './Renderer';
 import { World } from './World';
-import { Nodeling, type NodelingBranch } from '../entities/Nodeling';
+import { Nodeling } from '../entities/Nodeling';
 import { Building, type BuildingType } from '../entities/Building';
 import { Item } from '../entities/Item';
 import { GraphExecutor } from '../agent/GraphExecutor';
@@ -10,10 +10,8 @@ import { PromptPanel, type ConversationPlan } from '../ui/PromptPanel';
 import { GraphViewer } from '../ui/GraphViewer';
 import { HUD } from '../ui/HUD';
 import { SettingsPanel } from '../ui/SettingsPanel';
-import { NodeTray } from '../ui/NodeTray';
 import { TicketsPage } from '../ui/TicketsPage';
 import { NodeInfoPanel } from '../ui/NodeInfoPanel';
-import { NodelingMenu, type PathPlan } from '../ui/NodelingMenu';
 import { LLMBridge } from '../agent/LLMBridge';
 import { MCPPanel } from '../ui/MCPPanel';
 import { TicketStore } from './TicketStore';
@@ -36,8 +34,6 @@ export class Game {
   settingsPanel: SettingsPanel;
   ticketsPage: TicketsPage;
   nodeInfoPanel: NodeInfoPanel;
-  nodelingMenu: NodelingMenu;
-  nodeTray: NodeTray;
   mcpPanel: MCPPanel;
 
   activePage: 'orchestrate' | 'tickets' = 'orchestrate';
@@ -103,18 +99,6 @@ export class Game {
   /** Placement mode: which building type is being placed */
   placingType: BuildingType | null = null;
 
-  /** Eraser mode: click buildings/items to delete them */
-  eraserMode = false;
-
-  /** Move mode: next canvas click repositions this nodeling */
-  private moveTarget: Nodeling | null = null;
-
-  /** Path mode: accumulate waypoints for this nodeling */
-  private pathTarget: Nodeling | null = null;
-
-  /** Pending tool from NodeTray: waiting for the user to click a nodeling */
-  private pendingTool: 'move' | 'path' | null = null;
-
   constructor(canvas: HTMLCanvasElement, overlay: HTMLElement) {
     this.canvas = canvas;
     this.overlay = overlay;
@@ -138,19 +122,6 @@ export class Game {
     this.nodeInfoPanel = new NodeInfoPanel(overlay);
     this.nodeInfoPanel.onAddPrompt = (building, payload) => this.addPromptToBuilding(building, payload);
     this.nodeInfoPanel.onOpenMCP = () => this.mcpPanel.toggle();
-    this.nodelingMenu  = new NodelingMenu(overlay);
-    this.nodeTray = new NodeTray(
-      overlay,
-      (type) => this.startPlacing(type),
-      () => this.cancelPlacing(),
-      (name, color) => this.spawnNodeling(name, color),
-      () => this.toggleEraser(),
-      () => this.world.getNodelings(),
-      (nodeling) => this.selectNodeling(nodeling),
-      (nodeling) => this.deleteNodeling(nodeling),
-      () => this.activateMoveTool(),
-      () => this.activatePathTool(),
-    );
 
     // Handle resize
     window.addEventListener('resize', () => this.resize());
@@ -164,17 +135,9 @@ export class Game {
 
       if (e.key === 'Escape') {
         this.cancelCurrentMode();
-      } else if (!inInput) {
-        if (e.key === 'e' || e.key === 'E') {
-          this.toggleEraser();
-        } else if (e.key === 'm' || e.key === 'M') {
-          this.activateMoveTool();
-        } else if (e.key === 'p' || e.key === 'P') {
-          this.activatePathTool();
-        } else if (e.key === ' ') {
-          e.preventDefault();
-          this.resetCamera();
-        }
+      } else if (!inInput && e.key === ' ') {
+        e.preventDefault();
+        this.resetCamera();
       }
     });
 
@@ -211,17 +174,13 @@ export class Game {
       this.accumulator -= TICK_MS;
     }
 
-    // Render — pass placement info for ghost preview + live path overlay
+    // Render — pass placement info for ghost preview
     this.renderer.render(
       this.world,
       this.input.gridX,
       this.input.gridY,
       this.tickCount,
-      this.placingType,
-      this.eraserMode,
-      this.input.mouseX,
-      this.input.mouseY,
-      this.pathTarget ? this.nodelingMenu.getPathState() : null
+      this.placingType
     );
     this.hud.update();
     this.ticketsPage.update();
@@ -293,109 +252,6 @@ export class Game {
 
   private handleClick(gridX: number, gridY: number, screenX: number, screenY: number) {
 
-    // ── Pending tool: user must click a nodeling to apply Move or Path ───────
-    if (this.pendingTool) {
-      const nodelings = this.world.getNodelings();
-      const cx = screenX - this.canvas.clientWidth / 2;
-      const cy = screenY - this.canvas.clientHeight / 2;
-      let closestDist = 40 * this.camera.zoom;
-      let closestNodeling: Nodeling | null = null;
-      for (const nodeling of nodelings) {
-        if (nodeling.state === 'dormant') continue;
-        const screen = this.camera.worldToScreen(nodeling.interpX, nodeling.interpY);
-        const dx = cx - screen.x;
-        const dy = cy - screen.y;
-        if (Math.sqrt(dx * dx + dy * dy) < closestDist) {
-          closestDist = Math.sqrt(dx * dx + dy * dy);
-          closestNodeling = nodeling;
-        }
-      }
-      if (closestNodeling) {
-        const tool = this.pendingTool;
-        this.exitPendingTool();
-        if (tool === 'move') this.startMoveMode(closestNodeling);
-        else                 this.startPathMode(closestNodeling);
-      }
-      return; // consume the click regardless
-    }
-
-    // ── Move mode: next click repositions the nodeling ──────────────────────
-    if (this.moveTarget) {
-      const gx = Math.round(gridX), gy = Math.round(gridY);
-      if (!this.world.isWalkable(gx, gy)) {
-        this.renderer.flashInvalidTile(gx, gy);
-        return;
-      }
-      this.moveTarget.gridX = gx;
-      this.moveTarget.gridY = gy;
-      this.moveTarget.updateWorldPosition();
-      this.moveTarget.interpX = this.moveTarget.worldX;
-      this.moveTarget.interpY = this.moveTarget.worldY;
-      this.moveTarget.fromX   = gx;
-      this.moveTarget.fromY   = gy;
-      this.moveTarget.setState('idle');
-      this.moveTarget = null;
-      this.nodelingMenu.hide();
-      this.canvas.style.cursor = 'default';
-      return;
-    }
-
-    // ── Path mode: accumulate clicked tiles as waypoints ────────────────────
-    if (this.pathTarget) {
-      const gx = Math.round(gridX), gy = Math.round(gridY);
-      this.nodelingMenu.addPathPoint(gx, gy);
-      return;
-    }
-
-    // ── Mini-menu open: close on outside click (swallow the click) ──────────
-    if (this.nodelingMenu.mode === 'menu') {
-      this.nodelingMenu.hide();
-      return;
-    }
-
-    // Eraser mode — delete building, nodeling, or item at clicked tile
-    if (this.eraserMode) {
-      // Check if clicking a Nodeling first (screen-space proximity)
-      const nodelings = this.world.getNodelings();
-      const cx = screenX - this.canvas.clientWidth / 2;
-      const cy = screenY - this.canvas.clientHeight / 2;
-      let closestDist = 40 * this.camera.zoom;
-      let closestNodeling: Nodeling | null = null;
-      for (const nodeling of nodelings) {
-        if (nodeling.state === 'dormant') continue;
-        const screen = this.camera.worldToScreen(nodeling.interpX, nodeling.interpY);
-        const dx = cx - screen.x;
-        const dy = cy - screen.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < closestDist) {
-          closestDist = dist;
-          closestNodeling = nodeling;
-        }
-      }
-      if (closestNodeling) {
-        this.deleteNodeling(closestNodeling);
-        return;
-      }
-
-      const gx = Math.round(gridX);
-      const gy = Math.round(gridY);
-      const building = this.world.getBuildingAt(gx, gy);
-      if (building) {
-        // Clear any items stored in this building
-        for (const item of building.inventory) {
-          item.removed = true;
-        }
-        this.world.removeEntity(building);
-        return;
-      }
-      // Also try removing ground items at this tile
-      const items = this.world.getItems().filter(i => i.gridX === gx && i.gridY === gy && !i.carried && i.storedIn === null);
-      for (const item of items) {
-        this.world.removeEntity(item);
-      }
-      return;
-    }
-
     // Placement mode — place building on grid
     if (this.placingType) {
       const gx = Math.round(gridX);
@@ -404,7 +260,6 @@ export class Game {
         const building = new Building(this.placingType, gx, gy);
         this.world.addEntity(building);
         this.placingType = null;
-        this.nodeTray.clearSelection();
       } else {
         this.renderer.flashInvalidTile(gx, gy);
       }
@@ -453,192 +308,9 @@ export class Game {
     this.nodeInfoPanel.hide();
   }
 
-  /** Enter placement mode */
-  startPlacing(type: BuildingType) {
-    this.exitEraser();
-    this.exitPendingTool();
-    this.placingType = type;
-    this.canvas.style.cursor = 'crosshair';
-  }
-
-  /** Cancel placement mode */
-  cancelPlacing() {
-    this.placingType = null;
-    this.canvas.style.cursor = 'default';
-    this.nodeTray.clearSelection();
-  }
-
-  /** Toggle eraser mode */
-  toggleEraser() {
-    if (this.eraserMode) {
-      this.exitEraser();
-    } else {
-      // Cancel any active placement / pending tool first
-      this.cancelPlacing();
-      this.exitPendingTool();
-      this.eraserMode = true;
-      this.canvas.style.cursor = 'crosshair';
-      this.nodeTray.setEraserActive(true);
-    }
-  }
-
-  /** Exit eraser mode */
-  private exitEraser() {
-    if (!this.eraserMode) return;
-    this.eraserMode = false;
-    this.canvas.style.cursor = 'default';
-    this.nodeTray.setEraserActive(false);
-  }
-
-  /** Cancel the pending-tool pick state silently (no callback fired) */
-  private exitPendingTool() {
-    if (!this.pendingTool) return;
-    this.pendingTool = null;
-    this.nodeTray.setMoveActive(false);
-    this.nodeTray.setPathActive(false);
-    this.nodelingMenu.hide();
-  }
-
-  /** Activate Move tool from the NodeTray: show pick-a-nodeling prompt */
-  private activateMoveTool() {
-    if (this.pendingTool === 'move') {
-      // Toggle off
-      this.exitPendingTool();
-      return;
-    }
-    this.exitPendingTool();   // cancel path if it was active
-    this.cancelPlacing();
-    this.exitEraser();
-    this.pendingTool = 'move';
-    this.nodeTray.setMoveActive(true);
-    this.nodelingMenu.showPickBar('move');
-    this.nodelingMenu.onPickCancel = () => {
-      this.pendingTool = null;
-      this.nodeTray.setMoveActive(false);
-    };
-  }
-
-  /** Activate Path tool from the NodeTray: show pick-a-nodeling prompt */
-  private activatePathTool() {
-    if (this.pendingTool === 'path') {
-      // Toggle off
-      this.exitPendingTool();
-      return;
-    }
-    this.exitPendingTool();   // cancel move if it was active
-    this.cancelPlacing();
-    this.exitEraser();
-    this.pendingTool = 'path';
-    this.nodeTray.setPathActive(true);
-    this.nodelingMenu.showPickBar('path');
-    this.nodelingMenu.onPickCancel = () => {
-      this.pendingTool = null;
-      this.nodeTray.setPathActive(false);
-    };
-  }
-
-  /** Show the 3-button mini-menu above the nodeling */
-  private openNodelingMenu(nodeling: Nodeling, screenX: number, screenY: number) {
-    // Close any open panels first
-    this.promptPanel.hide();
-    this.graphViewer.hide();
-    this.nodeInfoPanel.hide();
-
-    // Compute overlay-space coords from the nodeling's actual world position
-    const s = this.camera.worldToScreen(nodeling.interpX, nodeling.interpY);
-    const menuX = this.canvas.clientWidth  / 2 + s.x;
-    const menuY = this.canvas.clientHeight / 2 + s.y;
-
-    this.nodelingMenu.showMenu(menuX, menuY, nodeling, {
-      onMove: () => this.startMoveMode(nodeling),
-      onPath: () => this.startPathMode(nodeling),
-      onInstruct: () => this.selectNodeling(nodeling),
-    });
-  }
-
-  /** Move mode — the next canvas click teleports this nodeling */
-  private startMoveMode(nodeling: Nodeling) {
-    this.moveTarget = nodeling;
-    this.canvas.style.cursor = 'crosshair';
-    this.nodelingMenu.showMoveBar();
-    this.nodelingMenu.onMoveCancel = () => {
-      this.moveTarget = null;
-      this.canvas.style.cursor = 'default';
-    };
-  }
-
-  /** Path mode — user clicks tiles to build a waypoint list (with optional branch) */
-  private startPathMode(nodeling: Nodeling) {
-    this.pathTarget = nodeling;
-    this.canvas.style.cursor = 'crosshair';
-    this.nodelingMenu.showPathBar();
-
-    this.nodelingMenu.onPathCancel = () => {
-      this.pathTarget = null;
-      this.canvas.style.cursor = 'default';
-    };
-
-    this.nodelingMenu.onPathFinish = (plan: PathPlan) => {
-      this.pathTarget = null;
-      this.canvas.style.cursor = 'default';
-
-      if (plan.mainWaypoints.length === 0) return;
-
-      const startPt   = { x: nodeling.gridX, y: nodeling.gridY };
-      const mainSteps = this.expandToSteps([startPt, ...plan.mainWaypoints]);
-
-      if (plan.branch) {
-        // Pre-expand both arms from the branch point
-        const bp         = plan.branch.branchAt;
-        const trueSteps  = plan.branch.truePath.length > 0
-          ? this.expandToSteps([bp, ...plan.branch.truePath])
-          : [];
-        const falseSteps = plan.branch.falsePath.length > 0
-          ? this.expandToSteps([bp, ...plan.branch.falsePath])
-          : [];
-
-        const branch: NodelingBranch = {
-          atX:       bp.x,
-          atY:       bp.y,
-          condition: plan.branch.condition,
-          truePath:  trueSteps,
-          falsePath: falseSteps,
-        };
-        nodeling.startBranchingPath(mainSteps, branch);
-      } else if (plan.bounce) {
-        nodeling.startBouncePath(mainSteps);
-      } else {
-        nodeling.startPath(mainSteps);
-      }
-    };
-  }
-
-  /**
-   * Bresenham-style expansion: turns a list of sparse waypoints
-   * into a contiguous tile-by-tile path for smooth nodeling movement.
-   */
-  private expandToSteps(
-    waypoints: { x: number; y: number }[]
-  ): { x: number; y: number }[] {
-    const steps: { x: number; y: number }[] = [];
-    for (let i = 1; i < waypoints.length; i++) {
-      let cx = waypoints[i - 1].x, cy = waypoints[i - 1].y;
-      const tx = waypoints[i].x,   ty = waypoints[i].y;
-      while (cx !== tx || cy !== ty) {
-        if (cx !== tx) cx += cx < tx ? 1 : -1;
-        if (cy !== ty) cy += cy < ty ? 1 : -1;
-        steps.push({ x: cx, y: cy });
-      }
-    }
-    return steps;
-  }
-
   /** Returns the current input mode for the HUD mode badge */
-  getCurrentMode(): 'normal' | 'place' | 'erase' | 'move' | 'path' {
+  getCurrentMode(): 'normal' | 'place' {
     if (this.placingType) return 'place';
-    if (this.eraserMode) return 'erase';
-    if (this.pendingTool === 'move' || this.moveTarget) return 'move';
-    if (this.pendingTool === 'path' || this.pathTarget) return 'path';
     return 'normal';
   }
 
@@ -649,17 +321,9 @@ export class Game {
 
   /** Cancel whichever mode is currently active */
   cancelCurrentMode() {
-    if (this.pendingTool) {
-      this.exitPendingTool();
-    } else if (this.moveTarget || this.pathTarget) {
-      this.moveTarget = null;
-      this.pathTarget = null;
-      this.nodelingMenu.hide();
+    if (this.placingType) {
+      this.placingType = null;
       this.canvas.style.cursor = 'default';
-    } else if (this.placingType) {
-      this.cancelPlacing();
-    } else if (this.eraserMode) {
-      this.toggleEraser();
     }
   }
 
@@ -801,18 +465,19 @@ export class Game {
 
   /**
    * Execute a workflow plan from the conversation builder.
-   * Places buildings in a row, applies configs, and injects the initial prompt.
+   * Places buildings vertically, then Sparky walks building-to-building
+   * carrying data through the chain sequentially.
    */
   executeConversationPlan(nodeling: Nodeling, plan: ConversationPlan) {
     const placed: Building[] = [];
-    const startX = 2;
-    const y = 5;
-    const spacing = 3;
+    const x = 5;
+    const startY = 2;
+    const spacing = 2;
 
     for (let i = 0; i < plan.buildings.length; i++) {
       const spec = plan.buildings[i];
-      let targetX = startX + i * spacing;
-      let targetY = y;
+      let targetX = x;
+      let targetY = startY + i * spacing;
 
       // Spiral search for empty tile if occupied
       if (!this.world.isWalkable(targetX, targetY)) {
@@ -832,7 +497,7 @@ export class Game {
             }
           }
         }
-        if (!found) continue; // skip if no room
+        if (!found) continue;
       }
 
       // Move nodeling off the tile if standing on it
@@ -850,42 +515,94 @@ export class Game {
       this.world.addEntity(building);
       placed.push(building);
 
-      // Apply config
+      // Apply config — flatten nested objects to strings
       if (spec.config && Object.keys(spec.config).length > 0) {
         const cfg = this.nodeInfoPanel.getOrCreateConfig(building.id);
-        Object.assign(cfg, spec.config);
+        for (const [k, v] of Object.entries(spec.config)) {
+          cfg[k] = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        }
       }
     }
 
-    // Flash placed tiles teal
+    // Flash placed tiles
     for (const b of placed) {
       this.renderer.flashBuildTile(b.gridX, b.gridY);
     }
 
-    // Record in ticket store
     this.ticketStore.create(nodeling.id, nodeling.name, `Building workflow: ${plan.description}`, this.tickCount);
 
-    // Auto-execute: inject initial prompt into first processor building
+    // Run the workflow: Sparky walks to each building sequentially, carrying data
     if (placed.length > 0) {
-      const firstProcessor = placed.find(b => b.isProcessor());
-      const firstInput = placed.find(b => b.buildingType === 'webhook' || b.buildingType === 'schedule');
+      this.runWorkflow(nodeling, placed, plan.initialPrompt || plan.description || 'Workflow triggered');
+    }
+  }
 
-      if (plan.initialPrompt && firstProcessor) {
-        this.addPromptToBuilding(firstProcessor, plan.initialPrompt);
-      } else if (firstInput) {
-        this.addPromptToBuilding(firstInput, plan.initialPrompt || 'Workflow triggered');
-      }
+  /** Sparky walks building-to-building, processing at each stop and carrying the result forward */
+  private async runWorkflow(nodeling: Nodeling, buildings: Building[], initialPayload: string) {
+    let payload = initialPayload;
 
-      // Walk Sparky to the first building
-      const target = firstInput || placed[0];
-      const path = this.world.findPath(nodeling.gridX, nodeling.gridY, target.gridX, target.gridY);
+    for (let i = 0; i < buildings.length; i++) {
+      const building = buildings[i];
+
+      // Walk to this building
+      nodeling.setState('moving');
+      const path = this.world.findPath(nodeling.gridX, nodeling.gridY, building.gridX, building.gridY);
       if (path.length > 0) {
         nodeling.startPath(path);
+        await this.waitForNodelingArrival(nodeling);
       }
+
+      // Arrived — process at this building
+      nodeling.setState('working');
+      this.ticketStore.append(nodeling.id, 'nodeling', `Working at ${building.buildingType}...`, this.tickCount);
+
+      const result = await this.processBuildingDirect(building, payload);
+      payload = result;
+
+      this.ticketStore.append(nodeling.id, 'nodeling',
+        `Done at ${building.buildingType}${i < buildings.length - 1 ? ' — moving on' : ''}`, this.tickCount);
     }
 
     nodeling.setState('happy');
-    this.ticketStore.append(nodeling.id, 'nodeling', `Workflow built! ${placed.length} buildings placed.`, this.tickCount);
+    this.ticketStore.append(nodeling.id, 'nodeling', `Workflow complete!`, this.tickCount);
+  }
+
+  /** Wait until a nodeling finishes walking its current path */
+  private waitForNodelingArrival(nodeling: Nodeling): Promise<void> {
+    return new Promise(resolve => {
+      const check = () => {
+        if (nodeling.path.length === 0 && nodeling.state !== 'moving') {
+          resolve();
+        } else {
+          requestAnimationFrame(check);
+        }
+      };
+      check();
+    });
+  }
+
+  /** Process a building and return the result payload directly (no items dropped) */
+  private async processBuildingDirect(building: Building, payload: string): Promise<string> {
+    const config = this.nodeInfoPanel.getBuildingConfig(building.id);
+    try {
+      const res = await fetch('/api/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buildingType: building.buildingType,
+          inputPayload: payload,
+          buildingConfig: config,
+        }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { outputPayload: string; metadata?: Record<string, any> };
+        return data.outputPayload || payload;
+      }
+    } catch (err) {
+      console.error('[processBuildingDirect] error:', err);
+    }
+    return `[Processed] ${payload}`;
   }
 
   getTicketStore(): TicketStore {
@@ -980,10 +697,8 @@ export class Game {
       this.promptPanel.hide();
       this.graphViewer.hide();
       this.nodeInfoPanel.hide();
-      this.nodeTray.hide();
     } else {
       this.ticketsPage.hide();
-      this.nodeTray.show();
     }
   }
 
@@ -992,20 +707,6 @@ export class Game {
     for (const nodeling of this.world.getNodelings()) {
       nodeling.wakeUp();
     }
-  }
-
-  /** Spawn a new Nodeling worker on the grid */
-  spawnNodeling(baseName: string, color?: string) {
-    const name = this.getUniqueNodelingName(baseName);
-    const tile = this.findSpawnTile();
-    if (!tile) return;
-    const nodeling = new Nodeling(name, tile.x, tile.y);
-    if (color) {
-      nodeling.baseColor = color;
-      nodeling.domeColor = color;
-    }
-    this.world.addEntity(nodeling);
-    nodeling.wakeUp();
   }
 
   /** Stop a nodeling's active task and return it to idle */

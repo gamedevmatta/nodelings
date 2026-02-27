@@ -49,9 +49,6 @@ export class HUD {
     this.shortcutsPanel.innerHTML = `
       <div class="hud-sc-title">Keyboard Shortcuts</div>
       <div class="hud-sc-rows">
-        <div class="hud-sc-row"><kbd>E</kbd><span>Toggle Eraser</span></div>
-        <div class="hud-sc-row"><kbd>M</kbd><span>Move Worker</span></div>
-        <div class="hud-sc-row"><kbd>P</kbd><span>Path Worker</span></div>
         <div class="hud-sc-row"><kbd>Space</kbd><span>Reset View</span></div>
         <div class="hud-sc-row"><kbd>ESC</kbd><span>Cancel Mode</span></div>
         <div class="hud-sc-row"><kbd>Right-drag</kbd><span>Pan Camera</span></div>
@@ -113,21 +110,9 @@ export class HUD {
       badge.style.display = 'flex';
       badge.className = `hud-mode-badge hud-mode-badge--${mode}`;
 
-      switch (mode) {
-        case 'place': {
-          const label = this.BUILDING_LABELS[this.game.placingType!] || this.game.placingType!;
-          modeText.textContent = `PLACE: ${label}`;
-          break;
-        }
-        case 'erase':
-          modeText.textContent = 'ERASER MODE';
-          break;
-        case 'move':
-          modeText.textContent = 'MOVE MODE';
-          break;
-        case 'path':
-          modeText.textContent = 'PATH MODE';
-          break;
+      if (mode === 'place') {
+        const label = this.BUILDING_LABELS[this.game.placingType!] || this.game.placingType!;
+        modeText.textContent = `PLACE: ${label}`;
       }
     }
   }
@@ -258,11 +243,6 @@ export class HUD {
 
       /* Mode color variants */
       .hud-mode-badge--place  .hud-mode-dot { background: #4ecdc4; box-shadow: 0 0 6px #4ecdc4; }
-      .hud-mode-badge--erase  .hud-mode-dot { background: #f87171; box-shadow: 0 0 6px #f87171; }
-      .hud-mode-badge--erase  .hud-mode-text { color: #f87171; }
-      .hud-mode-badge--move   .hud-mode-dot { background: #4ecdc4; box-shadow: 0 0 6px #4ecdc4; }
-      .hud-mode-badge--path   .hud-mode-dot { background: #a78bfa; box-shadow: 0 0 6px #a78bfa; }
-      .hud-mode-badge--path   .hud-mode-text { color: #a78bfa; }
 
       /* ── Shortcuts panel ── */
       .hud-shortcuts {
