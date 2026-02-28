@@ -21,12 +21,12 @@ export class SettingsPanel {
         <button class="settings-close">\u2715</button>
       </div>
       <div class="settings-section">
-        <label class="settings-label">Backend Status</label>
+        <label class="settings-label">⚡ Backend Status</label>
         <div class="settings-status">Checking...</div>
       </div>
       <div class="settings-divider"></div>
       <div class="settings-section">
-        <label class="settings-label">Your Keys</label>
+        <label class="settings-label">🔑 Your Keys</label>
         <div class="settings-key-note">Keys are encrypted and stored server-side. Never exposed to the browser.</div>
         <div class="settings-key-row">
           <span class="settings-key-label">Anthropic</span>
@@ -50,7 +50,7 @@ export class SettingsPanel {
         <div class="settings-key-status"></div>
       </div>
       <div class="settings-divider"></div>
-      <button class="settings-mcp-btn">MCP Servers</button>
+      <button class="settings-mcp-btn">Browse Integrations →</button>
     `;
 
     this.applyStyles();
@@ -290,7 +290,7 @@ export class SettingsPanel {
       }
       .settings-key-note {
         font-size: 11px;
-        color: #475569;
+        color: #64748b;
         margin-bottom: 2px;
       }
       .settings-key-row {
