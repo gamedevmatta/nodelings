@@ -547,25 +547,25 @@ export class PromptPanel {
     style.id = 'prompt-panel-styles';
     style.textContent = `
       @keyframes prompt-appear {
-        from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.98); }
+        from { opacity: 0; transform: translateX(-50%) translateY(40px) scale(0.98); }
         to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
       }
       .prompt-panel {
         position: absolute;
-        bottom: 72px;
+        bottom: 12px;
         left: 50%;
         transform: translateX(-50%);
-        width: min(380px, calc(100vw - 24px));
-        background: rgba(10,14,24,0.96);
+        width: min(449px, calc(100vw - 32px));
+        background: rgba(10,12,20,0.92);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(78,205,196,0.12);
-        border-radius: 20px;
-        padding: 16px 20px 14px;
+        border: 1px solid rgba(78,205,196,0.1);
+        border-radius: 28px;
+        padding: 14px 24px;
         display: flex;
         flex-direction: column;
         gap: 8px;
-        box-shadow: 0 8px 40px rgba(0,0,0,0.5), 0 0 24px rgba(78,205,196,0.04);
+        box-shadow: 0 4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
         font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
         color: #e2e8f0;
         box-sizing: border-box;
@@ -744,7 +744,7 @@ export class PromptPanel {
         min-width: 0;
         background: rgba(15,23,42,0.8);
         border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 10px;
+        border-radius: 14px;
         padding: 10px 12px;
         color: #e2e8f0;
         font-size: 13px;
@@ -762,7 +762,7 @@ export class PromptPanel {
       .pp-submit {
         background: linear-gradient(135deg, #4ecdc4, #44b8b0);
         border: none;
-        border-radius: 10px;
+        border-radius: 14px;
         padding: 10px 16px;
         color: #0f172a;
         font-weight: 600;

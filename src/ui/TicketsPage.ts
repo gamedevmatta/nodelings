@@ -862,13 +862,15 @@ export class TicketsPage {
         padding: 24px;
       }
       .tp-modal {
-        background: #0d1120;
-        border: 1px solid rgba(167,139,250,0.22);
-        border-radius: 18px;
+        background: rgba(10,12,20,0.92);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(78,205,196,0.1);
+        border-radius: 28px;
         width: 100%; max-width: 420px;
         display: flex; flex-direction: column;
         overflow: hidden;
-        box-shadow: 0 24px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(167,139,250,0.08) inset;
+        box-shadow: 0 4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
       }
       .tp-modal-header {
         display: flex; align-items: center; gap: 10px;

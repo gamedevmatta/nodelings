@@ -53,17 +53,17 @@ export class Camera {
     this.y += screenY * (1 / oldZoom - 1 / this.zoom);
   }
 
-  /** Center camera on a grid position */
-  centerOn(gx: number, gy: number, _screenW?: number, _screenH?: number) {
+  /** Center camera on a grid position (Renderer translates origin to screen center) */
+  centerOn(gx: number, gy: number) {
     this.x = gx * Camera.TILE_SIZE;
     this.y = gy * Camera.TILE_SIZE;
   }
 
-  /** Snap back to default view */
+  /** Snap back to default view centered on Sparky's spawn (6,5) */
   resetView() {
-    this.x = 5 * Camera.TILE_SIZE;
-    this.y = 5 * Camera.TILE_SIZE;
     this.zoom = 2;
     this.targetZoom = 2;
+    this.x = 6 * Camera.TILE_SIZE;
+    this.y = 5 * Camera.TILE_SIZE;
   }
 }

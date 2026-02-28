@@ -125,15 +125,15 @@ export class TutorialOverlay {
         to   { opacity: 1; transform: scale(1)    translateY(0); }
       }
       .letter-content {
-        background: rgba(10,12,20,0.96);
-        backdrop-filter: blur(28px);
-        -webkit-backdrop-filter: blur(28px);
+        background: rgba(10,12,20,0.92);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(78,205,196,0.1);
-        border-radius: 20px;
+        border-radius: 28px;
         padding: clamp(24px, 4vw, 36px) clamp(24px, 4vw, 40px);
         max-width: min(420px, calc(100vw - 32px));
         color: #e2e8f0;
-        box-shadow: 0 16px 56px rgba(0,0,0,0.6), 0 0 0 1px rgba(78,205,196,0.04), 0 0 48px rgba(78,205,196,0.05);
+        box-shadow: 0 4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
         box-sizing: border-box;
         animation: letter-appear 0.3s cubic-bezier(0.16, 1, 0.3, 1);
       }
