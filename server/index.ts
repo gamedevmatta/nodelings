@@ -1478,10 +1478,7 @@ app.post('/api/process', async (req, res) => {
         result = await processWithMCP(serverName, buildingType, inputPayload, buildingConfig);
         // For Notion: strip any Done-task content the agent managed to include despite instructions
         if (buildingType === 'notion') {
-          result = {
-            ...result,
-            outputPayload: stripDoneTasks(result.outputPayload),
-          };
+          result = { ...result, outputPayload: stripDoneTasks(result.outputPayload) };
         }
       } else {
         result = {
