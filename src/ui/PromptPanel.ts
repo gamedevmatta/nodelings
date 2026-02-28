@@ -86,6 +86,7 @@ export class PromptPanel {
   private thinking = false;
   private pendingPlan: ConversationPlan | null = null;
   private hasBackend = true; // assume true, flipped on 503
+  private workflowQuestionResolve: ((answer: string) => void) | null = null;
 
   constructor(overlay: HTMLElement, game: Game) {
     this.container = overlay;
@@ -132,18 +133,19 @@ export class PromptPanel {
     this.element.querySelector('.pp-build-btn')!.addEventListener('click', () => {
       if (this.pendingPlan && this.nodeling) {
         const plan = this.pendingPlan;
+        // Use the user's original message as the workflow input
+        const userMsg = this.messages.find(m => m.role === 'user');
+        if (userMsg && !plan.initialPrompt) {
+          plan.initialPrompt = userMsg.text;
+        }
         this.game.executeConversationPlan(this.nodeling, plan);
 
-        // Post-build narration — keep panel open
+        // Disable input while workflow runs — runWorkflow calls showWorkflowFollowUp() when done
         this.buildBtnEl.style.display = 'none';
         this.pendingPlan = null;
-        const buildingList = plan.buildings.map(b => b.type).join(' \u2192 ');
-        this.addBubble('assistant', `Done! I set up: ${buildingList}. Want me to tweak anything?`);
-        this.messages.push({ role: 'assistant', text: `Done! I set up: ${buildingList}. Want me to tweak anything?` });
-        this.input.disabled = false;
-        this.submitBtn.disabled = false;
-        this.input.placeholder = 'Ask Sparky to adjust...';
-        this.input.focus();
+        this.input.disabled = true;
+        this.submitBtn.disabled = true;
+        this.input.placeholder = 'Sparky is working...';
       }
     });
 
@@ -151,6 +153,11 @@ export class PromptPanel {
   }
 
   show(nodeling: Nodeling) {
+    // Don't interrupt a live workflow narration
+    if (this.visible && this.nodeling?.id === nodeling.id) {
+      return;
+    }
+
     this.nodeling = nodeling;
     this.visible = true;
     this.element.style.display = 'flex';
@@ -167,12 +174,22 @@ export class PromptPanel {
     this.input.disabled = false;
     this.submitBtn.disabled = false;
 
+    // Dynamic header — name + role + colored avatar dot
+    const titleEl = this.element.querySelector('.pp-title') as HTMLElement;
+    titleEl.innerHTML = `
+      <span class="pp-avatar" style="background:${nodeling.baseColor}">${nodeling.name[0].toUpperCase()}</span>
+      <span style="display:flex;flex-direction:column;gap:1px;line-height:1.2">
+        <span style="font-size:13px;font-weight:600;color:#e2e8f0">${nodeling.name}</span>
+        <span style="font-size:10px;font-weight:400;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">${nodeling.role}</span>
+      </span>
+    `;
+
     // Context-aware greeting
     this.messagesEl.innerHTML = '';
     const buildingCount = this.game.world.getBuildings().length;
     const greeting = buildingCount > 0
-      ? `Hey, Sparky here! Tell me what you need — I can see you've got ${buildingCount} building${buildingCount > 1 ? 's' : ''} set up already.`
-      : `Hey, Sparky here! Tell me what you need done — I'll figure out the rest.`;
+      ? `Hey, ${nodeling.name} here! Tell me what you need — I can see you've got ${buildingCount} building${buildingCount > 1 ? 's' : ''} set up already.`
+      : `Hey, ${nodeling.name} here! Tell me what you need done — I'll figure out the rest.`;
     this.addBubble('assistant', greeting);
     this.messages.push({ role: 'assistant', text: greeting });
 
@@ -182,6 +199,56 @@ export class PromptPanel {
   showError(message: string) {
     this.statusEl.textContent = message;
     this.statusEl.className = 'pp-status error';
+  }
+
+  /** Dim italic step-by-step narration bubble during workflow execution */
+  narrate(text: string) {
+    if (!this.visible) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'pp-msg pp-msg-sparky';
+    bubble.style.cssText = 'opacity:0.65;font-size:11.5px;font-style:italic;';
+    bubble.textContent = text;
+    this.messagesEl.appendChild(bubble);
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  /** Full-opacity teal block for final workflow output */
+  narrateResult(text: string) {
+    if (!this.visible) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'pp-msg pp-msg-sparky';
+    bubble.style.cssText = 'font-size:12px;background:rgba(78,205,196,0.08);border:1px solid rgba(78,205,196,0.2);white-space:pre-wrap;word-break:break-word;';
+    bubble.textContent = text;
+    this.messagesEl.appendChild(bubble);
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  /** Re-enables input and shows post-workflow option pills */
+  showWorkflowFollowUp() {
+    this.statusEl.textContent = '';
+    this.statusEl.className = 'pp-status';
+    this.input.disabled = false;
+    this.submitBtn.disabled = false;
+    this.input.placeholder = 'Ask Sparky to adjust or run again...';
+    this.renderOptions(['Run it again', 'Adjust the workflow', 'Schedule this']);
+  }
+
+  /** Pause mid-workflow and ask the user a question; resolves with their answer */
+  askWorkflowQuestion(text: string): Promise<string> {
+    return new Promise((resolve) => {
+      const bubble = document.createElement('div');
+      bubble.className = 'pp-msg pp-msg-sparky';
+      bubble.style.cssText = 'border:1px solid rgba(168,85,247,0.35);background:rgba(168,85,247,0.06);font-size:12.5px;';
+      bubble.textContent = text;
+      this.messagesEl.appendChild(bubble);
+      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+
+      this.input.disabled = false;
+      this.submitBtn.disabled = false;
+      this.input.placeholder = 'Reply to Sparky...';
+      this.input.focus();
+      this.workflowQuestionResolve = resolve;
+    });
   }
 
   hide() {
@@ -255,10 +322,30 @@ export class PromptPanel {
     }
   }
 
-  private async submit() {
+  private submit() {
     const text = this.input.value.trim();
-    if (!text || !this.nodeling || this.thinking) return;
+    if (!text) return;
+
+    // If mid-workflow question is pending, resolve it instead of going to /api/conversation
+    if (this.workflowQuestionResolve) {
+      const resolve = this.workflowQuestionResolve;
+      this.workflowQuestionResolve = null;
+      this.input.value = '';
+      this.input.disabled = true;
+      this.submitBtn.disabled = true;
+      this.input.placeholder = 'Sparky is working...';
+      const bubble = document.createElement('div');
+      bubble.className = 'pp-msg pp-msg-user';
+      bubble.textContent = text;
+      this.messagesEl.appendChild(bubble);
+      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      resolve(text);
+      return;
+    }
+
+    if (!this.nodeling || this.thinking) return;
     this.submitText(text);
+    this.input.value = '';
   }
 
   private async submitText(text: string) {
@@ -301,7 +388,7 @@ export class PromptPanel {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: this.messages,
-          worldContext: { buildings, mcpServers, mcpTools },
+          worldContext: { buildings, mcpServers, mcpTools, nodelingRole: this.nodeling.role },
         }),
         signal: AbortSignal.timeout(30_000),
       });

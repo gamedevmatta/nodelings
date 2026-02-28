@@ -92,6 +92,7 @@ export class Game {
   private accumulator = 0;
   private tickCount = 0;
   private running = false;
+  private lastWorkflow: { buildings: Building[]; payload: string } | null = null;
 
   /** Currently selected Nodeling */
   selectedNodeling: Nodeling | null = null;
@@ -537,14 +538,31 @@ export class Game {
     }
   }
 
-  /** Sparky walks building-to-building, processing at each stop and carrying the result forward */
+  /** Human-readable label for a building type */
+  private narrationLabel(type: string): string {
+    const labels: Record<string, string> = {
+      llm_node: 'LLM', llm_chain: 'LLM Chain', ai_agent: 'AI Agent',
+      notion: 'Notion', slack: 'Slack', gmail: 'Gmail',
+      google_sheets: 'Google Sheets', airtable: 'Airtable',
+      whatsapp: 'WhatsApp', scraper: 'Web Scraper',
+      deploy_node: 'Deploy', webhook: 'Webhook', schedule: 'Scheduler',
+      http_request: 'HTTP Request', image_gen: 'Image Gen',
+      gpu_core: 'GPU Core', code_node: 'Code Runner',
+    };
+    return labels[type] ?? type;
+  }
+
+  /** Sparky walks building-to-building, narrating every step in the panel */
   private async runWorkflow(nodeling: Nodeling, buildings: Building[], initialPayload: string) {
     let payload = initialPayload;
+    this.lastWorkflow = { buildings, payload: initialPayload };
+
+    this.promptPanel.narrate(`Starting — heading to ${this.narrationLabel(buildings[0]?.buildingType ?? '')}...`);
 
     for (let i = 0; i < buildings.length; i++) {
       const building = buildings[i];
+      const label = this.narrationLabel(building.buildingType);
 
-      // Walk to this building
       nodeling.setState('moving');
       const path = this.world.findPath(nodeling.gridX, nodeling.gridY, building.gridX, building.gridY);
       if (path.length > 0) {
@@ -552,19 +570,40 @@ export class Game {
         await this.waitForNodelingArrival(nodeling);
       }
 
-      // Arrived — process at this building
       nodeling.setState('working');
       this.ticketStore.append(nodeling.id, 'nodeling', `Working at ${building.buildingType}...`, this.tickCount);
+      this.promptPanel.narrate(`At ${label}...`);
 
-      const result = await this.processBuildingDirect(building, payload);
+      let result = await this.processBuildingDirect(building, payload);
+
+      // If agent needs clarification, pause and ask the user
+      if (result.startsWith('QUESTION:')) {
+        const question = result.slice('QUESTION:'.length).trim();
+        nodeling.setState('idle');
+        const answer = await this.promptPanel.askWorkflowQuestion(question);
+        nodeling.setState('working');
+        this.promptPanel.narrate(`Got it — retrying at ${label}...`);
+        result = await this.processBuildingDirect(building, `${payload}\n\nUser clarification: ${answer}`);
+      }
+
+      const isLast = i === buildings.length - 1;
+      if (result !== payload) {
+        if (isLast) {
+          this.promptPanel.narrateResult(result);
+        } else {
+          const preview = result.length > 140 ? result.slice(0, 140) + '…' : result;
+          this.promptPanel.narrate(`${label}: "${preview}"`);
+        }
+      }
+
       payload = result;
-
       this.ticketStore.append(nodeling.id, 'nodeling',
-        `Done at ${building.buildingType}${i < buildings.length - 1 ? ' — moving on' : ''}`, this.tickCount);
+        `Done at ${building.buildingType}${!isLast ? ' — moving on' : ''}`, this.tickCount);
     }
 
     nodeling.setState('happy');
     this.ticketStore.append(nodeling.id, 'nodeling', `Workflow complete!`, this.tickCount);
+    this.promptPanel.showWorkflowFollowUp();
   }
 
   /** Wait until a nodeling finishes walking its current path */

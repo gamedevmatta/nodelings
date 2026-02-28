@@ -163,11 +163,12 @@ async function callGeminiWithTools(
     const body: any = {
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
     };
     if (functionDeclarations.length > 0) {
       body.tools = [{ function_declarations: functionDeclarations }];
-      body.tool_config = { function_calling_config: { mode: 'AUTO' } };
+      // Force a tool call on the first step so the agent always searches before answering
+      body.tool_config = { function_calling_config: { mode: i === 0 ? 'ANY' : 'AUTO' } };
     }
 
     const res = await fetch(
@@ -216,7 +217,11 @@ async function callGeminiWithTools(
       const { name: callName, args } = fc.functionCall;
       const originalName = nameMap.get(callName) || callName;
       try {
-        const result = await executeTool(originalName, args || {});
+        let result = await executeTool(originalName, args || {});
+        // Truncate very large tool responses to keep the context manageable
+        if (result.length > 16000) {
+          result = result.slice(0, 16000) + '\n...(truncated)';
+        }
         console.log(`[Gemini agent]   ${callName} (${originalName}) → ${result.length} chars`);
         responseParts.push({
           functionResponse: { name: callName, response: { result } },
@@ -308,17 +313,19 @@ async function notionSearch(query: string): Promise<string> {
       'Notion-Version': '2022-06-28',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ query, page_size: 5 }),
+    body: JSON.stringify({ query, page_size: 10 }),
   });
   const data = await res.json() as any;
   if (!data.results) return 'No results found.';
   return data.results
     .map((r: any) => {
       const title =
+        r.title?.[0]?.plain_text ||              // databases store title at top level
         r.properties?.title?.title?.[0]?.plain_text ||
         r.properties?.Name?.title?.[0]?.plain_text ||
-        r.object;
-      return `- ${title ?? 'Untitled'} (${r.id})`;
+        '(untitled)';
+      const type = r.object === 'database' ? '[DATABASE]' : '[page]';
+      return `${type} ${title} (id: ${r.id})`;
     })
     .join('\n');
 }
@@ -326,52 +333,106 @@ async function notionSearch(query: string): Promise<string> {
 async function notionGetPage(pageId: string): Promise<string> {
   const notionToken = getNotionToken();
   if (!notionToken) return 'No Notion token available.';
-  const metaRes = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
-    headers: {
-      Authorization: `Bearer ${notionToken}`,
-      'Notion-Version': '2022-06-28',
-    },
-  });
+  const [metaRes, blocksRes] = await Promise.all([
+    fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+      headers: { Authorization: `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28' },
+    }),
+    fetch(`https://api.notion.com/v1/blocks/${pageId}/children?page_size=30`, {
+      headers: { Authorization: `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28' },
+    }),
+  ]);
   const meta = await metaRes.json() as any;
-  const blocksRes = await fetch(
-    `https://api.notion.com/v1/blocks/${pageId}/children?page_size=20`,
-    {
-      headers: {
-        Authorization: `Bearer ${notionToken}`,
-        'Notion-Version': '2022-06-28',
-      },
-    },
-  );
   const blocks = await blocksRes.json() as any;
+
+  // Extract title
   const title =
     meta.properties?.title?.title?.[0]?.plain_text ||
     meta.properties?.Name?.title?.[0]?.plain_text ||
     'Untitled';
-  const content = (blocks.results ?? [])
+
+  // Extract all structured properties (Status, Priority, Assignee, Description, etc.)
+  const props: string[] = [];
+  for (const [key, val] of Object.entries(meta.properties ?? {}) as [string, any][]) {
+    if (key === 'title' || key === 'Name') continue; // already captured as title
+    let text = '';
+    try {
+      switch (val.type) {
+        case 'rich_text': text = val.rich_text?.map((r: any) => r.plain_text).join('') || ''; break;
+        case 'select': text = val.select?.name || ''; break;
+        case 'multi_select': text = val.multi_select?.map((s: any) => s.name).join(', ') || ''; break;
+        case 'status': text = val.status?.name || ''; break;
+        case 'date': text = val.date?.start || ''; break;
+        case 'number': text = val.number != null ? String(val.number) : ''; break;
+        case 'checkbox': text = val.checkbox ? 'Yes' : 'No'; break;
+        case 'people': text = val.people?.map((p: any) => p.name || p.id).join(', ') || ''; break;
+        case 'url': text = val.url || ''; break;
+        case 'email': text = val.email || ''; break;
+        default: break;
+      }
+    } catch { /* skip */ }
+    if (text) props.push(`${key}: ${text}`);
+  }
+
+  // Extract block text content
+  const blockText = (blocks.results ?? [])
     .map((b: any) => {
       const type = b.type as string;
       const rich = b[type]?.rich_text ?? [];
       return rich.map((r: any) => r.plain_text).join('');
     })
     .filter(Boolean)
-    .slice(0, 10)
+    .slice(0, 15)
     .join('\n');
-  return `Page: ${title}\n\n${content || '(no text content)'}`;
+
+  const parts = [`Page: ${title}`];
+  if (props.length > 0) parts.push(props.join(' | '));
+  if (blockText) parts.push(blockText);
+  return parts.join('\n\n');
 }
 
-async function notionQueryDatabase(databaseId: string): Promise<string> {
+async function notionQueryDatabase(databaseId: string, filter?: string): Promise<string> {
   const notionToken = getNotionToken();
   if (!notionToken) return 'No Notion token available.';
-  const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${notionToken}`,
-      'Notion-Version': '2022-06-28',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ page_size: 20 }),
-  });
-  const data = await res.json() as any;
+
+  // Build Notion API filter from plain-text hint
+  const f = (filter ?? '').toLowerCase();
+  let notionFilter: Record<string, any> | undefined;
+  if (f.includes('all') || f.includes('everything')) {
+    notionFilter = undefined; // explicit request for all tasks
+  } else if (f.includes('done') && !f.includes('not')) {
+    notionFilter = { property: 'Status', status: { equals: 'Done' } };
+  } else if (f.includes('backlog') && !f.includes('not')) {
+    notionFilter = { property: 'Status', status: { equals: 'Backlog' } };
+  } else {
+    // Default: exclude Done (covers "not done", "open", "active", no filter, etc.)
+    notionFilter = { property: 'Status', status: { does_not_equal: 'Done' } };
+  }
+
+  const makeQuery = async (filterBody?: Record<string, any>) => {
+    const queryBody: Record<string, any> = {
+      page_size: 50,
+      sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+    };
+    if (filterBody) queryBody.filter = filterBody;
+    const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${notionToken}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(queryBody),
+    });
+    return res.json() as Promise<any>;
+  };
+
+  let data = await makeQuery(notionFilter);
+
+  // Fallback: if filtered query failed or returned 0 results, retry without filter
+  if (notionFilter && (!data.results || data.results.length === 0)) {
+    data = await makeQuery(undefined);
+  }
+
   if (!data.results) return `Could not query database. Response: ${JSON.stringify(data).slice(0, 500)}`;
   if (data.results.length === 0) return 'Database is empty (no rows).';
   return data.results
@@ -413,7 +474,7 @@ async function executeLegacyTool(name: string, input: Record<string, string>): P
     case 'notion_get_page':
       return notionGetPage(input.page_id);
     case 'notion_query_database':
-      return notionQueryDatabase(input.database_id);
+      return notionQueryDatabase(input.database_id, input.filter);
     default:
       return `Unknown tool: ${name}`;
   }
@@ -481,6 +542,7 @@ interface ConversationRequest {
     buildings: { type: string; x: number; y: number }[];
     mcpServers: string[];
     mcpTools: string[];
+    nodelingRole?: string;
   };
 }
 
@@ -491,6 +553,8 @@ const AVAILABLE_BUILDING_TYPES = [
 ];
 
 function buildConversationSystemPrompt(worldContext: ConversationRequest['worldContext'], userTurnCount: number): string {
+  const agentName = worldContext?.nodelingRole || 'Sparky';
+
   const mcpInfo = worldContext.mcpServers.length > 0
     ? `Connected MCP servers: ${worldContext.mcpServers.join(', ')} (available tools: ${worldContext.mcpTools.join(', ')}). You CAN execute tasks immediately using these tools — or use ai_agent buildings to set them up as persistent workflows.`
     : 'No MCP servers connected. You can still execute tasks using the built-in AI.';
@@ -503,7 +567,7 @@ function buildConversationSystemPrompt(worldContext: ConversationRequest['worldC
     ? `\n\nIMPORTANT: The user has sent ${userTurnCount} messages. You MUST now produce the final response with "done": true. If building, include "plan". If executing, include "task". Do NOT ask any more questions.`
     : '';
 
-  return `You are Sparky — a proactive work helper. You DO tasks for the user immediately.
+  return `You are ${agentName} — a proactive work helper. You DO tasks for the user immediately.
 
 ## EXAMPLES — follow these exactly:
 
@@ -514,36 +578,36 @@ User: "summarize my emails"
 You: {"reply": "Let me check your emails.", "options": [], "done": true, "action": "execute", "task": "Summarize the user's recent emails."}
 
 User: "set up a webhook to process data every hour"
-You: {"reply": "I'll build that.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "schedule", "config": {"frequency": "Every hour"}}, {"type": "ai_agent", "config": {"systemPrompt": "Process incoming data"}}, {"type": "deploy_node", "config": {}}], "description": "Hourly data processor"}}
+You: {"reply": "I'll build that.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "schedule", "config": {"frequency": "Every hour"}}, {"type": "ai_agent", "config": {"systemPrompt": "Process incoming data"}}], "description": "Hourly data processor"}}
 
 User: "read my Notion tasks and send a summary to Slack"
-You: {"reply": "I'll set that up.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "schedule", "config": {"frequency": "Every day"}}, {"type": "notion", "config": {"action": "Query tasks"}}, {"type": "slack", "config": {"action": "Post summary"}}, {"type": "deploy_node", "config": {}}], "description": "Notion tasks to Slack digest"}}
+You: {"reply": "I'll set that up.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "notion", "config": {"action": "Query tasks"}}, {"type": "slack", "config": {"action": "Post summary"}}], "description": "Notion tasks to Slack digest"}}
 
 ## RULES
 
-For MOST requests: respond with done:true, action:"execute", and a task string. This is the default.
-Only use action:"build" when the user explicitly asks for automation, scheduling, webhooks, or recurring tasks.
-NEVER ask "how should this be triggered?" for one-shot requests like writing, drafting, summarizing, or checking data.
+ALWAYS use action:"build" when the request mentions any service or integration (notion, slack, gmail, sheets, etc.).
+Only use action:"execute" for pure questions or simple tasks with no specific service (e.g. "write me a poem", "explain recursion").
 
 RESPONSE FORMAT — your ENTIRE response must be a single valid JSON object. Pick ONE:
 
-Option A (EXECUTE — use this for most requests):
-{"reply": "On it!", "options": [], "done": true, "action": "execute", "task": "the full task description for the AI agent"}
-
-Option B (BUILD — only for automation/scheduled workflows):
+Option A (BUILD — use this whenever the request involves a service):
 {"reply": "I'll set that up.", "options": [], "done": true, "action": "build", "plan": {"buildings": [{"type": "...", "config": {}}], "description": "...", "initialPrompt": "..."}}
+
+Option B (EXECUTE — only for generic tasks with no specific service):
+{"reply": "On it!", "options": [], "done": true, "action": "execute", "task": "the full task description for the AI agent"}
 
 Option C (ASK — only when you truly need clarification, which is rare):
 {"reply": "Quick question...", "options": ["Option A", "Option B"], "done": false}
 
-EXECUTE RULES:
-- The "task" field is a clear instruction sent to an AI agent with tool access.
-- Be specific: include what to do and desired output format.
-- Do NOT ask about triggers, schedules, or webhooks for simple requests. Just execute.
-
-BUILD RULES (only when user asks for automation):
+BUILD RULES:
 - Building types: ${AVAILABLE_BUILDING_TYPES.join(', ')}
 - Inputs: webhook, schedule | Processors: llm_node, ai_agent, llm_chain, code_node, image_gen, gpu_core, http_request, notion, slack, gmail, google_sheets, airtable, whatsapp, scraper | Outputs: deploy_node
+- IMPORTANT: Do NOT put ai_agent or llm_node between integration buildings (notion, slack, gmail, etc.). Each integration building already has AI reasoning built in — it can read, summarize, and transform data on its own. Only use ai_agent for standalone "think about this" steps with no specific service.
+- Only include buildings that are strictly needed. Do NOT add deploy_node, schedule, or webhook unless the user specifically asks for deployment, scheduling, or webhook triggers. "Read Notion and send to Slack" = just notion + slack, nothing else.
+
+EXECUTE RULES:
+- Only for requests with no specific service involved.
+- The "task" field is a clear instruction sent to an AI agent with tool access.
 
 PERSONALITY: Be confident and direct. Keep replies to 1 sentence. Skip questions when possible.
 
@@ -969,11 +1033,45 @@ async function processWithMCP(
   }
 
   const action = config.action || 'Process the given input';
-  const systemPrompt = `You are an integration assistant for ${buildingType}.
-The user wants to: ${action}.
-Use the available tools to accomplish this task with the given input.
-If the input contains data/content and your job is to send or post it, use the appropriate tool to deliver it.
-Return a concise summary of what you did and any relevant results.`;
+
+  // For Slack: pre-fetch member channels so the agent doesn't have to guess
+  let slackMemberChannels = '';
+  if (buildingType === 'slack') {
+    try {
+      const listResult = await mcpHub.executeAnthropicToolCall('slack__slack_list_channels', {});
+      const parsed = JSON.parse(listResult);
+      const channels: any[] = parsed.channels || parsed;
+      const memberChannels = Array.isArray(channels)
+        ? channels.filter((c: any) => c.is_member).map((c: any) => `${c.name} (${c.id})`)
+        : [];
+      slackMemberChannels = memberChannels.length > 0
+        ? `The bot is a member of these channels ONLY: ${memberChannels.join(', ')}. Post to one of these — do not try any other channel IDs.`
+        : 'Could not determine member channels — try posting to any channel.';
+    } catch {
+      slackMemberChannels = 'Could not pre-fetch channels — list them yourself first.';
+    }
+  }
+
+  // Build integration-specific search guidance
+  const searchHints: Record<string, string> = {
+    notion: 'Step 1: Call notion_search("Tasks") to find the task database. Results labelled [DATABASE] are databases — use these first. Step 2a: If you find a [DATABASE], call notion_query_database with its ID. ALWAYS pass filter="not done" unless the user explicitly asks for completed or all tasks. This returns up to 50 rows of open/active tasks. Step 2b: Only call notion_get_page on [page] results if no relevant database exists. Step 3: Return the actual task names, statuses, and assignees. Never ask the user for IDs.',
+    slack: `${slackMemberChannels} Post ONE single message with ALL the content. Do NOT split into multiple messages. After a SUCCESSFUL post (response contains ok:true), stop immediately and return a confirmation.`,
+    gmail: 'Search or list emails directly. Never ask the user which email or thread.',
+    google_sheets: 'Search or list spreadsheets to find the right one. Never ask for a spreadsheet ID.',
+    airtable: 'List bases and tables first to find the right one. Never ask for IDs.',
+  };
+  const integrationHint = searchHints[buildingType] || 'Use your available tools to find and complete the task. Never ask for IDs or names — look them up.';
+
+  const systemPrompt = `You are a proactive integration agent for ${buildingType}.
+Task: ${action}.
+Input from previous step: use this as context for what to search/send.
+
+MANDATORY RULES — follow these exactly:
+1. Your FIRST action MUST be a tool call — never respond with plain text first.
+2. ${integrationHint}
+3. If a tool call fails or returns no results, try a different query or approach — do not give up.
+4. When you have results, return a plain-text summary that includes the actual content — titles, statuses, descriptions, key details. Do not just say "I retrieved it." Include the real data.
+5. Only ask the user a question if you have tried all available tools and genuinely cannot proceed without specific information. Format: QUESTION: [your specific question]. Do NOT ask for things you can find with tools.`;
 
   const backend = getBackend();
 
@@ -999,7 +1097,7 @@ Return a concise summary of what you did and any relevant results.`;
     };
 
     const model = GEMINI_MODEL_MAP[config.model] || 'gemini-2.0-flash';
-    const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, 5);
+    const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, 10);
     return {
       outputPayload: result.text || `[${buildingType}] Processing complete.`,
       metadata: { buildingType, serverName, backend: 'gemini', agentSteps: result.steps, mcpToolsUsed: true },
@@ -1020,7 +1118,7 @@ Return a concise summary of what you did and any relevant results.`;
   let finalText = '';
   let steps = 0;
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
