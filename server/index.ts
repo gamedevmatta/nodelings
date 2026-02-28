@@ -274,12 +274,12 @@ const NOTION_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'notion_query_database',
-    description: 'Query a Notion database and return its rows/entries.',
+    description: 'Query a Notion database. Returns open/active tasks only (Done tasks are excluded automatically). Always call this with filter="not done".',
     input_schema: {
       type: 'object' as const,
       properties: {
         database_id: { type: 'string', description: 'Notion database ID' },
-        filter: { type: 'string', description: 'Optional plain-text filter description' },
+        filter: { type: 'string', description: 'Use "not done" to get open tasks (the only valid value for this workflow)' },
       },
       required: ['database_id'],
     },
@@ -396,11 +396,15 @@ async function notionQueryDatabase(databaseId: string, filter?: string): Promise
 
   // Build Notion API filter from plain-text hint
   const f = (filter ?? '').toLowerCase();
+  console.log(`[notionQueryDatabase] filter arg: "${filter ?? '(none)'}"`);
+  const wantsAll = f.includes('all') || f.includes('everything');
+  // If the agent explicitly asks for Done tasks, refuse so it can't confuse them with open tasks
+  if (!wantsAll && f.includes('done') && !f.includes('not')) {
+    return 'Done tasks are excluded from this workflow. Call notion_query_database with filter="not done" to get open tasks.';
+  }
   let notionFilter: Record<string, any> | undefined;
-  if (f.includes('all') || f.includes('everything')) {
+  if (wantsAll) {
     notionFilter = undefined; // explicit request for all tasks
-  } else if (f.includes('done') && !f.includes('not')) {
-    notionFilter = { property: 'Status', status: { equals: 'Done' } };
   } else if (f.includes('backlog') && !f.includes('not')) {
     notionFilter = { property: 'Status', status: { equals: 'Backlog' } };
   } else {
@@ -435,7 +439,8 @@ async function notionQueryDatabase(databaseId: string, filter?: string): Promise
 
   if (!data.results) return `Could not query database. Response: ${JSON.stringify(data).slice(0, 500)}`;
   if (data.results.length === 0) return 'Database is empty (no rows).';
-  return data.results
+
+  const rows = data.results
     .map((r: any) => {
       const props: string[] = [];
       for (const [key, val] of Object.entries(r.properties ?? {}) as [string, any][]) {
@@ -462,11 +467,62 @@ async function notionQueryDatabase(databaseId: string, filter?: string): Promise
         if (text) props.push(`${key}: ${text}`);
       }
       return `- ${props.join(' | ')}`;
-    })
-    .join('\n');
+    });
+
+  // Belt-and-suspenders: always strip Done rows unless user explicitly requested all tasks
+  const filtered = !wantsAll
+    ? rows.filter((row: string) => !/\bStatus:\s*Done\b/i.test(row))
+    : rows;
+
+  if (filtered.length === 0) return 'No open tasks found.';
+  return filtered.join('\n');
 }
 
 /** Execute a legacy (non-MCP) tool call */
+/**
+ * Final safety net: remove any content about Done tasks from a Notion agent output.
+ * Single-pass state machine handles: "Done:" headers, "Status: Done" inline, and all items under Done sections.
+ */
+function stripDoneTasks(text: string): string {
+  const DONE_HEADER = /^\s*\*{0,2}(done|completed tasks?|finished tasks?)[:\s]*\*{0,2}\s*$/i;
+  const OPEN_HEADER = /^\*{0,2}[A-Z][^*\n]{1,40}\*{0,2}[:\s]*$/; // any other section heading
+  const BULLET = /^\s*[-*•]/;
+  const STATUS_DONE = /\bstatus[:\s]+done\b/i;
+  const INLINE_DONE = /\b(done|completed)\b/i; // broad catch for summary sentences
+
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let inDoneSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Detect Done section header — enter Done section, skip this line
+    if (DONE_HEADER.test(trimmed)) {
+      inDoneSection = true;
+      continue;
+    }
+
+    // Detect any other section header — exit Done section
+    if (inDoneSection && OPEN_HEADER.test(trimmed) && !DONE_HEADER.test(trimmed)) {
+      inDoneSection = false;
+    }
+
+    // Skip everything inside a Done section
+    if (inDoneSection) continue;
+
+    // Skip individual lines with Status: Done (raw data leak)
+    if (STATUS_DONE.test(line)) continue;
+
+    result.push(line);
+  }
+
+  return result
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 async function executeLegacyTool(name: string, input: Record<string, string>): Promise<string> {
   switch (name) {
     case 'notion_search':
@@ -1054,7 +1110,7 @@ async function processWithMCP(
 
   // Build integration-specific search guidance
   const searchHints: Record<string, string> = {
-    notion: 'Step 1: Call notion_search("Tasks") to find the task database. Results labelled [DATABASE] are databases — use these first. Step 2a: If you find a [DATABASE], call notion_query_database with its ID. ALWAYS pass filter="not done" unless the user explicitly asks for completed or all tasks. This returns up to 50 rows of open/active tasks. Step 2b: Only call notion_get_page on [page] results if no relevant database exists. Step 3: Return the actual task names, statuses, and assignees. Never ask the user for IDs.',
+    notion: 'Step 1: Call notion_search("Tasks") to find the database ID only — ignore [page] results from search. Step 2: Call notion_query_database EXACTLY ONCE with the database ID and filter="not done". NEVER call notion_query_database with filter="done" or without a filter — only one call with filter="not done". The function automatically excludes Done tasks. Step 3: Return ONLY the rows from that single notion_query_database call. Do NOT combine results from multiple queries. Never ask the user for IDs.',
     slack: `${slackMemberChannels} Post ONE single message with ALL the content. Do NOT split into multiple messages. After a SUCCESSFUL post (response contains ok:true), stop immediately and return a confirmation.`,
     gmail: 'Search or list emails directly. Never ask the user which email or thread.',
     google_sheets: 'Search or list spreadsheets to find the right one. Never ask for a spreadsheet ID.',
@@ -1075,21 +1131,28 @@ MANDATORY RULES — follow these exactly:
 
   const backend = getBackend();
 
-  // Include legacy Notion tools for notion buildings (MCP query-data-source is broken)
-  const legacyTools = (buildingType === 'notion' && getNotionToken())
-    ? NOTION_TOOLS.map(t => ({ name: t.name, description: t.description || '', inputSchema: t.input_schema }))
+  // For Notion buildings, use ONLY legacy tools so our Done filter always applies.
+  // MCP notion tools (notion__API_query_data_source etc.) bypass our filter.
+  // Also exclude notion_get_page — agents use it to fetch Done pages found via search.
+  const NOTION_TOOLS_RESTRICTED = NOTION_TOOLS.filter(t => t.name !== 'notion_get_page');
+  const isNotionWithToken = buildingType === 'notion' && !!getNotionToken();
+  const legacyTools = isNotionWithToken
+    ? NOTION_TOOLS_RESTRICTED.map(t => ({ name: t.name, description: t.description || '', inputSchema: t.input_schema }))
     : [];
 
   // Gemini path — native function calling with server tools
   if (backend === 'gemini') {
-    const geminiTools = [
-      ...serverTools.map(t => ({
-        name: `${serverName}__${t.name}`,
-        description: `[${serverName}] ${t.description}`,
-        inputSchema: t.inputSchema,
-      })),
-      ...legacyTools,
-    ];
+    // For Notion: skip MCP tools entirely and use only our filtered legacy tools
+    const geminiTools = isNotionWithToken
+      ? legacyTools
+      : [
+          ...serverTools.map(t => ({
+            name: `${serverName}__${t.name}`,
+            description: `[${serverName}] ${t.description}`,
+            inputSchema: t.inputSchema,
+          })),
+          ...legacyTools,
+        ];
 
     const executeTool = async (name: string, args: Record<string, any>): Promise<string> => {
       if (name.includes('__')) return mcpHub.executeAnthropicToolCall(name, args);
@@ -1105,14 +1168,17 @@ MANDATORY RULES — follow these exactly:
   }
 
   // Anthropic path — agentic tool-use loop
-  const anthropicTools: Anthropic.Tool[] = [
-    ...serverTools.map(t => ({
-      name: `${serverName}__${t.name}`,
-      description: `[${serverName}] ${t.description}`,
-      input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-    })),
-    ...(legacyTools.length > 0 ? NOTION_TOOLS : []),
-  ];
+  // For Notion: skip MCP tools entirely and use only our filtered legacy tools
+  const anthropicTools: Anthropic.Tool[] = isNotionWithToken
+    ? NOTION_TOOLS_RESTRICTED
+    : [
+        ...serverTools.map(t => ({
+          name: `${serverName}__${t.name}`,
+          description: `[${serverName}] ${t.description}`,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+        ...(legacyTools.length > 0 ? NOTION_TOOLS : []),
+      ];
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: input }];
   let finalText = '';
@@ -1410,6 +1476,13 @@ app.post('/api/process', async (req, res) => {
       const serverName = mcpHub.findServerForBuilding(buildingType);
       if (serverName) {
         result = await processWithMCP(serverName, buildingType, inputPayload, buildingConfig);
+        // For Notion: strip any Done-task content the agent managed to include despite instructions
+        if (buildingType === 'notion') {
+          result = {
+            ...result,
+            outputPayload: stripDoneTasks(result.outputPayload),
+          };
+        }
       } else {
         result = {
           outputPayload: `[${buildingType}] No MCP server connected for this service. Add one in Settings > MCP Servers.`,

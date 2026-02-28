@@ -16,6 +16,7 @@ export interface NodelingBranch {
 export class Nodeling extends Entity {
   state: NodelingState = 'dormant';
   name: string;
+  role: string = 'Assistant';
 
   /** Movement */
   path: { x: number; y: number }[] = [];

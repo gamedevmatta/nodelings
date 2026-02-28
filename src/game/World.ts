@@ -194,6 +194,7 @@ export class World {
 
     // Single Nodeling — 1 tile right of the build column (x=5)
     const nodeling1 = new Nodeling('Sparky', 6, 5);
+    nodeling1.role = 'AI Strategist';
     world.addEntity(nodeling1);
 
     return world;

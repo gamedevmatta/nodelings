@@ -167,7 +167,8 @@ export class MCPHub {
       else if (block.type === 'image') texts.push('[image data]');
       else texts.push(JSON.stringify(block));
     }
-    return texts.join('\n');
+    const output = texts.join('\n');
+    return output;
   }
 
   /** Get status of all configured servers */
