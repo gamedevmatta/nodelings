@@ -110,7 +110,7 @@ export class Game {
     this.llm = new LLMBridge();
 
     // Center camera on workspace
-    this.camera.centerOn(5, 5, canvas.clientWidth, canvas.clientHeight);
+    this.camera.centerOn(6, 5);
 
     // UI
     this.promptPanel  = new PromptPanel(overlay, this);
@@ -146,7 +146,7 @@ export class Game {
 
   resize() {
     this.renderer.resize();
-    this.camera.centerOn(5, 5, this.canvas.clientWidth, this.canvas.clientHeight);
+    this.camera.centerOn(6, 5);
   }
 
   start() {

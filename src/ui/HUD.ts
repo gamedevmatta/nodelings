@@ -142,38 +142,38 @@ export class HUD {
       .hud-pill {
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
         background: rgba(10,12,20,0.92);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(78,205,196,0.1);
         border-radius: 999px;
-        padding: 10px 10px 10px 24px;
+        padding: 15px 15px 15px 36px;
         pointer-events: auto;
-        box-shadow: 0 4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
+        box-shadow: 0 6px 42px rgba(0,0,0,0.5), 0 0 30px rgba(78,205,196,0.03);
       }
       .hud-title {
         font-family: 'Bungee', 'Segoe UI', system-ui, sans-serif;
-        font-size: 22px;
+        font-size: 33px;
         font-weight: 400;
         color: #e2e8f0;
-        letter-spacing: 3px;
+        letter-spacing: 4.5px;
         white-space: nowrap;
-        margin-right: 6px;
+        margin-right: 9px;
       }
       .hud-divider {
-        width: 1px;
-        height: 22px;
+        width: 1.5px;
+        height: 33px;
         background: rgba(255,255,255,0.1);
         flex-shrink: 0;
-        margin: 0 4px;
+        margin: 0 6px;
       }
       .hud-nav-btn {
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 36px;
-        height: 36px;
+        width: 54px;
+        height: 54px;
         background: none;
         border: none;
         color: #4a5568;
@@ -181,6 +181,10 @@ export class HUD {
         border-radius: 999px;
         transition: color 0.15s, background 0.15s;
         flex-shrink: 0;
+      }
+      .hud-nav-btn svg {
+        width: 27px;
+        height: 27px;
       }
       .hud-nav-btn:hover {
         color: #94a3b8;
@@ -250,13 +254,13 @@ export class HUD {
         top: 76px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(10,12,20,0.97);
-        backdrop-filter: blur(24px);
-        -webkit-backdrop-filter: blur(24px);
+        background: rgba(10,12,20,0.92);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(78,205,196,0.1);
-        border-radius: 16px;
-        padding: 14px 18px 16px;
-        box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+        border-radius: 28px;
+        padding: 14px 20px 16px;
+        box-shadow: 0 4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
         pointer-events: auto;
         z-index: 60;
         min-width: 220px;
