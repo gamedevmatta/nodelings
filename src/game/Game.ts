@@ -15,6 +15,7 @@ import { NodeInfoPanel } from '../ui/NodeInfoPanel';
 import { LLMBridge } from '../agent/LLMBridge';
 import { MCPPanel } from '../ui/MCPPanel';
 import { TicketStore } from './TicketStore';
+import { initSession, apiFetch } from '../api';
 
 const TICK_RATE = 30;
 const TICK_MS = 1000 / TICK_RATE;
@@ -158,6 +159,9 @@ export class Game {
     // Show "click me" hint on Sparky
     const sparky = this.world.getNodelings().find(n => n.name === 'Sparky');
     if (sparky) sparky.showHint = true;
+
+    // Initialize anonymous session (silently skips if server is offline)
+    initSession().catch(() => {});
 
     requestAnimationFrame((t) => this.loop(t));
   }
@@ -624,9 +628,8 @@ export class Game {
   private async processBuildingDirect(building: Building, payload: string): Promise<string> {
     const config = this.nodeInfoPanel.getBuildingConfig(building.id);
     try {
-      const res = await fetch('/api/process', {
+      const res = await apiFetch('/api/process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           buildingType: building.buildingType,
           inputPayload: payload,
@@ -655,9 +658,8 @@ export class Game {
       if (msg.trim().endsWith('?')) nodeling.setState('confused');
     };
     executor.onSensor = async (buildingType) => {
-      const res = await fetch('/api/sensor', {
+      const res = await apiFetch('/api/sensor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           buildingType,
           nodelingName: nodeling.name,
@@ -1133,9 +1135,8 @@ export class Game {
   /** Register a webhook path with the backend server */
   private async registerWebhookPath(buildingId: number, path: string, secret: string) {
     try {
-      await fetch('/api/webhook/register', {
+      await apiFetch('/api/webhook/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, secret, buildingId }),
       });
     } catch {
@@ -1147,7 +1148,7 @@ export class Game {
   /** Poll a webhook building's path for incoming data */
   private async pollWebhook(building: Building, path: string) {
     try {
-      const res = await fetch(`/api/webhook/poll?path=${encodeURIComponent(path)}`);
+      const res = await apiFetch(`/api/webhook/poll?path=${encodeURIComponent(path)}`);
       if (!res.ok) return;
       const data = await res.json() as { items: { payload: string; timestamp: number; source: string }[] };
       if (!data.items || data.items.length === 0) return;
@@ -1247,9 +1248,8 @@ export class Game {
     const payload = building.processingPayload;
 
     try {
-      const res = await fetch('/api/process', {
+      const res = await apiFetch('/api/process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           buildingType: building.buildingType,
           inputPayload: payload,

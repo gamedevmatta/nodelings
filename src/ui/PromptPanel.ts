@@ -1,5 +1,6 @@
 import type { Game } from '../game/Game';
 import type { Nodeling } from '../entities/Nodeling';
+import { apiFetch } from '../api';
 
 export interface ConversationPlan {
   buildings: { type: string; config: Record<string, string> }[];
@@ -371,7 +372,7 @@ export class PromptPanel {
       let mcpServers: string[] = [];
       let mcpTools: string[] = [];
       try {
-        const mcpRes = await fetch('/api/mcp/status');
+        const mcpRes = await apiFetch('/api/mcp/status');
         if (mcpRes.ok) {
           const mcpData = await mcpRes.json() as { servers: { name: string; connected: boolean; tools: { name: string }[] }[] };
           for (const s of mcpData.servers || []) {
@@ -383,9 +384,8 @@ export class PromptPanel {
         }
       } catch { /* MCP status unavailable — proceed without */ }
 
-      const res = await fetch('/api/conversation', {
+      const res = await apiFetch('/api/conversation', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: this.messages,
           worldContext: { buildings, mcpServers, mcpTools, nodelingRole: this.nodeling.role },
@@ -463,9 +463,8 @@ export class PromptPanel {
   private async executeTask(task: string) {
     this.setWorking(true);
     try {
-      const res = await fetch('/api/execute', {
+      const res = await apiFetch('/api/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task }),
         signal: AbortSignal.timeout(90_000),
       });

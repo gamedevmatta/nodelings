@@ -1,5 +1,6 @@
 import { NodeGraph } from './NodeGraph';
 import type { GraphNode } from './nodes';
+import { apiFetch } from '../api';
 
 export type LLMProvider = 'openai' | 'anthropic' | 'gemini';
 
@@ -10,9 +11,8 @@ export class LLMBridge {
   async generateGraph(prompt: string, context: string): Promise<NodeGraph | null> {
     // Try server-side generation first
     try {
-      const res = await fetch('/api/generate-graph', {
+      const res = await apiFetch('/api/generate-graph', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, context }),
         signal: AbortSignal.timeout(30_000),
       });

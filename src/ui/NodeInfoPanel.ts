@@ -1,5 +1,6 @@
 import type { Building } from '../entities/Building';
 import { SVG_ICONS } from '../game/icons';
+import { apiFetch } from '../api';
 
 interface NodeInput {
   key: string;
@@ -440,7 +441,7 @@ export class NodeInfoPanel {
       return this.mcpCache.servers;
     }
     try {
-      const res = await fetch('/api/mcp/status');
+      const res = await apiFetch('/api/mcp/status');
       if (!res.ok) return [];
       const data = await res.json() as { servers: MCPStatusCache['servers'] };
       this.mcpCache = { timestamp: Date.now(), servers: data.servers || [] };

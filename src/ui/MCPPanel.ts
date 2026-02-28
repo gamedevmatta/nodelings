@@ -1,3 +1,5 @@
+import { apiFetch } from '../api';
+
 interface MCPServerInfo {
   name: string;
   connected: boolean;
@@ -57,7 +59,7 @@ export class MCPPanel {
 
   async refresh() {
     try {
-      const res = await fetch('/api/mcp/status');
+      const res = await apiFetch('/api/mcp/status');
       if (res.ok) {
         const data = await res.json();
         this.servers = data.servers || [];
@@ -71,11 +73,18 @@ export class MCPPanel {
   }
 
   private render() {
+    // Production banner — shown when running in a production build (Vite sets import.meta.env.PROD)
+    const isProd = (import.meta as any).env?.PROD === true;
+    const devBanner = isProd
+      ? `<div class="mcp-dev-notice">⚠ MCP servers run as local processes and are only supported when self-hosting. In production, use built-in integrations instead.</div>`
+      : '';
+
     this.element.innerHTML = `
       <div class="mcp-header">
         <span class="mcp-title">MCP Servers</span>
         <button class="mcp-close">✕</button>
       </div>
+      ${devBanner}
       <p class="mcp-desc">
         Connect external services via
         <a href="https://modelcontextprotocol.io" target="_blank" rel="noopener" style="color:#4ecdc4;text-decoration:none;">Model Context Protocol</a>.
@@ -185,9 +194,8 @@ export class MCPPanel {
         btn.disabled = true;
         btn.textContent = action === 'disconnect' ? 'Disconnecting...' : 'Connecting...';
         try {
-          await fetch(`/api/mcp/${action === 'disconnect' ? 'disconnect' : 'connect'}`, {
+          await apiFetch(`/api/mcp/${action === 'disconnect' ? 'disconnect' : 'connect'}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(
               action === 'disconnect'
                 ? { name }
@@ -202,9 +210,8 @@ export class MCPPanel {
       card.querySelector('.mcp-srv-remove')!.addEventListener('click', async (e) => {
         e.stopPropagation();
         try {
-          await fetch('/api/mcp/remove', {
+          await apiFetch('/api/mcp/remove', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
           });
         } catch {}
@@ -245,9 +252,8 @@ export class MCPPanel {
     this.setStatus('Connecting...', false);
 
     try {
-      const res = await fetch('/api/mcp/connect', {
+      const res = await apiFetch('/api/mcp/connect', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, command, args, env }),
       });
       const data = await res.json();
@@ -331,6 +337,15 @@ export class MCPPanel {
         padding: 2px 6px;
       }
       .mcp-close:hover { color: #e2e8f0; }
+      .mcp-dev-notice {
+        font-size: 11px;
+        color: #f59e0b;
+        background: rgba(245,158,11,0.08);
+        border: 1px solid rgba(245,158,11,0.2);
+        border-radius: 8px;
+        padding: 8px 10px;
+        line-height: 1.4;
+      }
       .mcp-desc {
         font-size: 12px;
         color: #4a5e74;

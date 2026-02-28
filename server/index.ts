@@ -4,6 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import { MCPHub } from './mcp-hub.js';
+import { createSession, sessionExists, setKeys, getKey, getKeyStatus } from './session-store.js';
 
 const app = express();
 
@@ -35,9 +36,10 @@ async function callGemini(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 1024,
+  apiKey = GEMINI_API_KEY,
 ): Promise<{ text: string; usage?: { input: number; output: number } }> {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -129,6 +131,7 @@ async function callGeminiWithTools(
   tools: { name: string; description: string; inputSchema: any }[],
   executeTool: (name: string, args: Record<string, any>) => Promise<string>,
   maxSteps = 10,
+  apiKey = GEMINI_API_KEY,
 ): Promise<{ text: string; steps: number }> {
   // Convert tools to Gemini function_declarations format
   const functionDeclarations = tools.map(t => {
@@ -172,7 +175,7 @@ async function callGeminiWithTools(
     }
 
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -240,11 +243,36 @@ async function callGeminiWithTools(
   return { text: 'Agent reached maximum steps.', steps };
 }
 
-/** Check which AI backend is available */
-function getBackend(): 'anthropic' | 'gemini' | null {
+/** Check which AI backend is available, preferring session keys over server env vars */
+function getBackend(sessionId?: string): 'anthropic' | 'gemini' | null {
+  if (sessionId) {
+    if (getKey(sessionId, 'anthropicKey')) return 'anthropic';
+    if (getKey(sessionId, 'geminiKey')) return 'gemini';
+  }
   if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
   if (GEMINI_API_KEY) return 'gemini';
   return null;
+}
+
+/** Extract the session token from a request header */
+function getSessionId(req: express.Request): string | undefined {
+  return (req.headers['x-session-token'] as string) || undefined;
+}
+
+/** Get an Anthropic client using the session user's key or fall back to server env key */
+function getAnthropicClient(sessionId?: string): Anthropic {
+  const userKey = sessionId ? getKey(sessionId, 'anthropicKey') : null;
+  const key = userKey || process.env.ANTHROPIC_API_KEY || '';
+  return new Anthropic({ apiKey: key });
+}
+
+/** Get the Gemini API key for a session, falling back to server env var */
+function resolveGeminiKey(sessionId?: string): string {
+  if (sessionId) {
+    const userKey = getKey(sessionId, 'geminiKey');
+    if (userKey) return userKey;
+  }
+  return GEMINI_API_KEY;
 }
 
 // ── Legacy Notion tool definitions (fallback when no MCP server) ────────────
@@ -536,6 +564,47 @@ async function executeLegacyTool(name: string, input: Record<string, string>): P
   }
 }
 
+// ── Session management ────────────────────────────────────────────────────────
+
+/** Create an anonymous session. Returns a UUID token for the client to store. */
+app.post('/api/session', (_req, res) => {
+  const token = createSession();
+  res.json({ token });
+});
+
+/** Check which services have keys saved for the current session. */
+app.get('/api/session/keys', (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId || !sessionExists(sessionId)) {
+    res.status(401).json({ error: 'Invalid or missing session token' });
+    return;
+  }
+  res.json(getKeyStatus(sessionId));
+});
+
+/**
+ * Save one or more encrypted keys for the current session.
+ * Pass empty string to remove a key. Keys: anthropicKey, geminiKey, notionToken.
+ */
+app.put('/api/session/keys', (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId || !sessionExists(sessionId)) {
+    res.status(401).json({ error: 'Invalid or missing session token' });
+    return;
+  }
+  const { anthropicKey, geminiKey, notionToken } = req.body as {
+    anthropicKey?: string;
+    geminiKey?: string;
+    notionToken?: string;
+  };
+  const keys: Record<string, string> = {};
+  if (anthropicKey !== undefined) keys.anthropicKey = anthropicKey;
+  if (geminiKey !== undefined) keys.geminiKey = geminiKey;
+  if (notionToken !== undefined) keys.notionToken = notionToken;
+  setKeys(sessionId, keys);
+  res.json({ ok: true });
+});
+
 // ── MCP management endpoints ────────────────────────────────────────────────
 
 app.get('/api/mcp/status', (_req, res) => {
@@ -732,7 +801,8 @@ app.post('/api/generate-graph', async (req, res) => {
     return;
   }
 
-  const backend = getBackend();
+  const sessionId = getSessionId(req);
+  const backend = getBackend(sessionId);
   if (!backend) {
     res.status(503).json({ error: 'No AI API key configured on server' });
     return;
@@ -744,10 +814,10 @@ app.post('/api/generate-graph', async (req, res) => {
     let responseText = '';
 
     if (backend === 'gemini') {
-      const result = await callGemini('gemini-2.0-flash', GRAPH_SYSTEM_PROMPT, userMessage, 1000);
+      const result = await callGemini('gemini-2.0-flash', GRAPH_SYSTEM_PROMPT, userMessage, 1000, resolveGeminiKey(sessionId));
       responseText = result.text;
     } else {
-      const response = await anthropic.messages.create({
+      const response = await getAnthropicClient(sessionId).messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1000,
         system: GRAPH_SYSTEM_PROMPT,
@@ -786,7 +856,8 @@ app.post('/api/generate-graph', async (req, res) => {
 app.post('/api/conversation', async (req, res) => {
   const { messages, worldContext }: ConversationRequest = req.body;
 
-  const backend = getBackend();
+  const sessionId = getSessionId(req);
+  const backend = getBackend(sessionId);
   if (!backend) {
     res.status(503).json({ error: 'No AI API key configured' });
     return;
@@ -818,7 +889,7 @@ app.post('/api/conversation', async (req, res) => {
         generationConfig: { temperature: 0.7, maxOutputTokens: 2048, responseMimeType: 'application/json' },
       };
       const apiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${resolveGeminiKey(sessionId)}`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
       );
       const data = await apiRes.json() as any;
@@ -829,7 +900,7 @@ app.post('/api/conversation', async (req, res) => {
         role: m.role as 'user' | 'assistant',
         content: m.text,
       }));
-      const response = await anthropic.messages.create({
+      const response = await getAnthropicClient(sessionId).messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
         system: systemPrompt,
@@ -867,7 +938,8 @@ app.post('/api/conversation', async (req, res) => {
 app.post('/api/execute', async (req, res) => {
   const { task, systemPrompt }: { task: string; systemPrompt?: string } = req.body;
 
-  const backend = getBackend();
+  const sessionId = getSessionId(req);
+  const backend = getBackend(sessionId);
   if (!backend) {
     res.status(503).json({ error: 'No AI API key configured' });
     return;
@@ -881,7 +953,7 @@ app.post('/api/execute', async (req, res) => {
   try {
     const config: Record<string, string> = {};
     if (systemPrompt) config.systemPrompt = systemPrompt;
-    const result = await processAIAgent(task, config);
+    const result = await processAIAgent(task, config, sessionId);
     res.json({ result: result.outputPayload, metadata: result.metadata });
   } catch (err: any) {
     console.error('[/api/execute] error:', err?.message ?? err);
@@ -917,6 +989,7 @@ async function processAISimple(
   buildingType: string,
   input: string,
   config: Record<string, string>,
+  sessionId?: string,
 ): Promise<{ outputPayload: string; metadata: Record<string, any> }> {
   let systemPrompt = config.systemPrompt || config.prompt || '';
 
@@ -928,12 +1001,12 @@ async function processAISimple(
     systemPrompt = 'You are a helpful assistant. Respond concisely.';
   }
 
-  const backend = getBackend();
+  const backend = getBackend(sessionId);
 
   // Gemini path
   if (backend === 'gemini') {
     const model = GEMINI_MODEL_MAP[config.model] || 'gemini-2.0-flash';
-    const result = await callGemini(model, systemPrompt, input);
+    const result = await callGemini(model, systemPrompt, input, 1024, resolveGeminiKey(sessionId));
     return {
       outputPayload: result.text,
       metadata: { model, buildingType, backend: 'gemini', inputTokens: result.usage?.input, outputTokens: result.usage?.output },
@@ -942,7 +1015,7 @@ async function processAISimple(
 
   // Anthropic path (default)
   const model = MODEL_MAP[config.model] || 'claude-haiku-4-5-20251001';
-  const response = await anthropic.messages.create({
+  const response = await getAnthropicClient(sessionId).messages.create({
     model,
     max_tokens: 1024,
     system: systemPrompt,
@@ -967,12 +1040,13 @@ async function processAISimple(
 async function processAIAgent(
   input: string,
   config: Record<string, string>,
+  sessionId?: string,
 ): Promise<{ outputPayload: string; metadata: Record<string, any> }> {
   const systemPrompt = config.systemPrompt || config.prompt ||
     'You are a proactive AI agent. Use your tools to COMPLETE the task — do not ask the user for IDs, names, or details you can look up yourself. Search for databases, channels, pages, etc. using the tools available. If unsure which resource, pick the most likely one and proceed. Be concise in your final response.';
   const maxSteps = parseInt(config.maxSteps || '10', 10);
 
-  const backend = getBackend();
+  const backend = getBackend(sessionId);
 
   // Gemini path — full agentic loop with native function calling
   if (backend === 'gemini') {
@@ -1004,7 +1078,7 @@ async function processAIAgent(
       return executeLegacyTool(name, args as Record<string, string>);
     };
 
-    const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, maxSteps);
+    const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, maxSteps, resolveGeminiKey(sessionId));
     return {
       outputPayload: result.text,
       metadata: { model, buildingType: 'ai_agent', backend: 'gemini', agentSteps: result.steps, toolsAvailable: geminiTools.length },
@@ -1023,9 +1097,10 @@ async function processAIAgent(
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: input }];
   let finalText = '';
   let steps = 0;
+  const anthropicClient = getAnthropicClient(sessionId);
 
   for (let i = 0; i < maxSteps; i++) {
-    const response = await anthropic.messages.create({
+    const response = await anthropicClient.messages.create({
       model,
       max_tokens: 2048,
       system: systemPrompt,
@@ -1081,6 +1156,7 @@ async function processWithMCP(
   buildingType: string,
   input: string,
   config: Record<string, string>,
+  sessionId?: string,
 ): Promise<{ outputPayload: string; metadata: Record<string, any> }> {
   const serverTools = mcpHub.getToolsForServer(serverName);
 
@@ -1129,7 +1205,7 @@ MANDATORY RULES — follow these exactly:
 4. When you have results, return a plain-text summary that includes the actual content — titles, statuses, descriptions, key details. Do not just say "I retrieved it." Include the real data.
 5. Only ask the user a question if you have tried all available tools and genuinely cannot proceed without specific information. Format: QUESTION: [your specific question]. Do NOT ask for things you can find with tools.`;
 
-  const backend = getBackend();
+  const backend = getBackend(sessionId);
 
   // For Notion buildings, use ONLY legacy tools so our Done filter always applies.
   // MCP notion tools (notion__API_query_data_source etc.) bypass our filter.
@@ -1160,7 +1236,7 @@ MANDATORY RULES — follow these exactly:
     };
 
     const model = GEMINI_MODEL_MAP[config.model] || 'gemini-2.0-flash';
-    const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, 10);
+    const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, 10, resolveGeminiKey(sessionId));
     return {
       outputPayload: result.text || `[${buildingType}] Processing complete.`,
       metadata: { buildingType, serverName, backend: 'gemini', agentSteps: result.steps, mcpToolsUsed: true },
@@ -1183,9 +1259,10 @@ MANDATORY RULES — follow these exactly:
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: input }];
   let finalText = '';
   let steps = 0;
+  const anthropicClient = getAnthropicClient(sessionId);
 
   for (let i = 0; i < 10; i++) {
-    const response = await anthropic.messages.create({
+    const response = await anthropicClient.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
       system: systemPrompt,
@@ -1450,6 +1527,8 @@ app.post('/api/process', async (req, res) => {
     return;
   }
 
+  const sessionId = getSessionId(req);
+
   try {
     let result: { outputPayload: string; metadata: Record<string, any> };
 
@@ -1460,22 +1539,22 @@ app.post('/api/process', async (req, res) => {
       return;
     }
 
-    if (!getBackend()) {
+    if (!getBackend(sessionId)) {
       res.status(503).json({ error: 'No AI API key configured (set ANTHROPIC_API_KEY or GEMINI_API_KEY in .env)' });
       return;
     }
 
     if (buildingType === 'ai_agent') {
       // AI Agent — full agentic loop with ALL MCP tools
-      result = await processAIAgent(inputPayload, buildingConfig);
+      result = await processAIAgent(inputPayload, buildingConfig, sessionId);
     } else if (buildingType === 'llm_node' || buildingType === 'llm_chain') {
       // One-shot AI call
-      result = await processAISimple(buildingType, inputPayload, buildingConfig);
+      result = await processAISimple(buildingType, inputPayload, buildingConfig, sessionId);
     } else if (MCP_BUILDING_TYPES.includes(buildingType)) {
       // Integration buildings — route through MCP
       const serverName = mcpHub.findServerForBuilding(buildingType);
       if (serverName) {
-        result = await processWithMCP(serverName, buildingType, inputPayload, buildingConfig);
+        result = await processWithMCP(serverName, buildingType, inputPayload, buildingConfig, sessionId);
         // For Notion: strip any Done-task content the agent managed to include despite instructions
         if (buildingType === 'notion') {
           result = { ...result, outputPayload: stripDoneTasks(result.outputPayload) };
@@ -1513,8 +1592,9 @@ interface SensorRequest {
 
 app.post('/api/sensor', async (req, res) => {
   const { buildingType, nodelingName, ticketHistory }: SensorRequest = req.body;
+  const sessionId = getSessionId(req);
 
-  if (!getBackend()) {
+  if (!getBackend(sessionId)) {
     res.json({ summary: 'Backend not configured — add ANTHROPIC_API_KEY or GEMINI_API_KEY to .env' });
     return;
   }
@@ -1524,7 +1604,7 @@ app.post('/api/sensor', async (req, res) => {
   if (mcpServer) {
     try {
       const historyText = (ticketHistory ?? []).slice(-6).map(e => `[${e.role}] ${e.text}`).join('\n');
-      const result = await processWithMCP(mcpServer, buildingType, historyText || 'Read and summarize available data.', {});
+      const result = await processWithMCP(mcpServer, buildingType, historyText || 'Read and summarize available data.', {}, sessionId);
       res.json({ summary: result.outputPayload });
       return;
     } catch (err: any) {
@@ -1553,9 +1633,10 @@ If there is nothing relevant, say so briefly.`;
   try {
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userMessage }];
     let summary = '';
+    const anthropicClient = getAnthropicClient(sessionId);
 
     for (let i = 0; i < 5; i++) {
-      const response = await anthropic.messages.create({
+      const response = await anthropicClient.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 512,
         system: systemPrompt,
@@ -1592,14 +1673,18 @@ If there is nothing relevant, say so briefly.`;
 
 // ── /api/health ─────────────────────────────────────────────────────────────
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', (req, res) => {
+  const sessionId = getSessionId(req);
+  const keyStatus = sessionId ? getKeyStatus(sessionId) : {};
   res.json({
     ok: true,
     hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
     hasGeminiKey: !!GEMINI_API_KEY,
-    activeBackend: getBackend(),
+    activeBackend: getBackend(sessionId),
     hasNotionToken: !!getNotionToken(),
     notionTargetId: process.env.NOTION_TARGET_ID || '(not set)',
+    hasSessionAnthropicKey: !!keyStatus.anthropicKey,
+    hasSessionGeminiKey: !!keyStatus.geminiKey,
     mcpServers: mcpHub.connectedCount,
     mcpTools: mcpHub.getAllTools().length,
     webhookPaths: webhookRegistrations.size,
