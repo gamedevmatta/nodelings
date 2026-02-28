@@ -79,6 +79,10 @@ export class PromptPanel {
   private statusEl: HTMLElement;
   private buildBtnEl: HTMLElement;
   private presetGrid: HTMLElement;
+  private takeoverEl: HTMLElement;
+  private takeoverQuestionEl: HTMLElement;
+  private takeoverCardsEl: HTMLElement;
+  private takeoverSkipBtn: HTMLElement;
   private nodeling: Nodeling | null = null;
   private visible = false;
 
@@ -102,6 +106,11 @@ export class PromptPanel {
       </div>
       <div class="pp-messages"></div>
       <div class="pp-options"></div>
+      <div class="pp-takeover" style="display:none">
+        <div class="pp-takeover-question"></div>
+        <div class="pp-takeover-cards"></div>
+        <button class="pp-takeover-skip">Skip</button>
+      </div>
       <div class="pp-build-row" style="display:none">
         <button class="pp-build-btn">Build it!</button>
       </div>
@@ -123,6 +132,21 @@ export class PromptPanel {
     this.statusEl = this.element.querySelector('.pp-status')!;
     this.buildBtnEl = this.element.querySelector('.pp-build-row')!;
     this.presetGrid = this.element.querySelector('.pp-presets')!;
+    this.takeoverEl = this.element.querySelector('.pp-takeover')!;
+    this.takeoverQuestionEl = this.element.querySelector('.pp-takeover-question')!;
+    this.takeoverCardsEl = this.element.querySelector('.pp-takeover-cards')!;
+    this.takeoverSkipBtn = this.element.querySelector('.pp-takeover-skip')!;
+
+    this.takeoverSkipBtn.addEventListener('click', () => {
+      if (this.workflowQuestionResolve) {
+        const resolve = this.workflowQuestionResolve;
+        this.workflowQuestionResolve = null;
+        this.exitTakeover();
+        resolve('');
+      } else {
+        this.exitTakeover();
+      }
+    });
 
     this.submitBtn.addEventListener('click', () => this.submit());
     this.input.addEventListener('keydown', (e) => {
@@ -150,7 +174,7 @@ export class PromptPanel {
       }
     });
 
-    this.element.style.display = 'none';
+    // Panel starts hidden via CSS (no display:none needed)
   }
 
   show(nodeling: Nodeling) {
@@ -161,7 +185,6 @@ export class PromptPanel {
 
     this.nodeling = nodeling;
     this.visible = true;
-    this.element.style.display = 'flex';
     this.messages = [];
     this.pendingPlan = null;
     this.thinking = false;
@@ -174,6 +197,11 @@ export class PromptPanel {
     this.input.value = '';
     this.input.disabled = false;
     this.submitBtn.disabled = false;
+    this.input.placeholder = 'Tell Sparky what you need...';
+    this.exitTakeover();
+
+    // Trigger slide-in
+    this.element.classList.add('pp-visible');
 
     // Dynamic header — name + role + colored avatar dot
     const titleEl = this.element.querySelector('.pp-title') as HTMLElement;
@@ -231,30 +259,36 @@ export class PromptPanel {
     this.input.disabled = false;
     this.submitBtn.disabled = false;
     this.input.placeholder = 'Ask Sparky to adjust or run again...';
-    this.renderOptions(['Run it again', 'Adjust the workflow', 'Schedule this']);
+    this.enterTakeover('What next?', ['Run it again', 'Adjust the workflow', 'Schedule this']);
   }
 
   /** Pause mid-workflow and ask the user a question; resolves with their answer */
-  askWorkflowQuestion(text: string): Promise<string> {
+  askWorkflowQuestion(text: string, options?: string[]): Promise<string> {
     return new Promise((resolve) => {
-      const bubble = document.createElement('div');
-      bubble.className = 'pp-msg pp-msg-sparky';
-      bubble.style.cssText = 'border:1px solid rgba(168,85,247,0.35);background:rgba(168,85,247,0.06);font-size:12.5px;';
-      bubble.textContent = text;
-      this.messagesEl.appendChild(bubble);
-      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      this.workflowQuestionResolve = resolve;
+
+      if (options && options.length > 0 && options.length <= 3) {
+        this.enterTakeover(text, options);
+      } else {
+        // Existing bubble behavior (purple question bubble)
+        const bubble = document.createElement('div');
+        bubble.className = 'pp-msg pp-msg-sparky';
+        bubble.style.cssText = 'border:1px solid rgba(168,85,247,0.35);background:rgba(168,85,247,0.06);font-size:12.5px;';
+        bubble.textContent = text;
+        this.messagesEl.appendChild(bubble);
+        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      }
 
       this.input.disabled = false;
       this.submitBtn.disabled = false;
-      this.input.placeholder = 'Reply to Sparky...';
+      this.input.placeholder = options?.length ? 'Or type your own answer...' : 'Reply to Sparky...';
       this.input.focus();
-      this.workflowQuestionResolve = resolve;
     });
   }
 
   hide() {
     this.visible = false;
-    this.element.style.display = 'none';
+    this.element.classList.remove('pp-visible');
   }
 
   setThinking(thinking: boolean) {
@@ -272,6 +306,62 @@ export class PromptPanel {
       this.input.disabled = false;
     }
   }
+
+  /* ── Takeover mode ── */
+
+  private enterTakeover(question: string, options: string[]) {
+    // Compact chat so it stays visible but smaller
+    this.messagesEl.classList.add('pp-messages--compact');
+    this.optionsEl.style.display = 'none';
+    this.buildBtnEl.style.display = 'none';
+    this.presetGrid.style.display = 'none';
+    this.statusEl.style.display = 'none';
+
+    // Show takeover
+    this.takeoverEl.style.display = 'flex';
+    this.takeoverQuestionEl.textContent = question;
+    this.takeoverCardsEl.innerHTML = '';
+
+    // Render up to 3 large option cards
+    const displayOptions = options.slice(0, 3);
+    for (const opt of displayOptions) {
+      const card = document.createElement('button');
+      card.className = 'pp-takeover-card';
+      card.textContent = opt;
+      card.addEventListener('click', () => {
+        this.exitTakeover();
+        if (this.workflowQuestionResolve) {
+          const resolve = this.workflowQuestionResolve;
+          this.workflowQuestionResolve = null;
+          this.input.value = '';
+          this.input.disabled = true;
+          this.submitBtn.disabled = true;
+          this.input.placeholder = 'Sparky is working...';
+          const bubble = document.createElement('div');
+          bubble.className = 'pp-msg pp-msg-user';
+          bubble.textContent = opt;
+          this.messagesEl.appendChild(bubble);
+          this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+          resolve(opt);
+        } else if (!this.thinking) {
+          this.submitText(opt);
+        }
+      });
+      this.takeoverCardsEl.appendChild(card);
+    }
+
+    // Input row stays visible for manual typing
+    this.input.placeholder = 'Or type your own answer...';
+  }
+
+  private exitTakeover() {
+    this.takeoverEl.style.display = 'none';
+    this.messagesEl.classList.remove('pp-messages--compact');
+    this.optionsEl.style.display = 'flex';
+    this.statusEl.style.display = '';
+  }
+
+  /* ── Private helpers ── */
 
   private animateThinking() {
     let dots = 0;
@@ -331,6 +421,7 @@ export class PromptPanel {
     if (this.workflowQuestionResolve) {
       const resolve = this.workflowQuestionResolve;
       this.workflowQuestionResolve = null;
+      this.exitTakeover();
       this.input.value = '';
       this.input.disabled = true;
       this.submitBtn.disabled = true;
@@ -342,6 +433,11 @@ export class PromptPanel {
       this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
       resolve(text);
       return;
+    }
+
+    // If takeover is showing but no workflow question (conversation options case), exit
+    if (this.takeoverEl.style.display !== 'none') {
+      this.exitTakeover();
     }
 
     if (!this.nodeling || this.thinking) return;
@@ -439,7 +535,11 @@ export class PromptPanel {
         this.messagesEl.appendChild(planDesc);
         this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
       } else if (data.options && data.options.length > 0) {
-        this.renderOptions(data.options);
+        if (data.options.length <= 3) {
+          this.enterTakeover(data.reply, data.options);
+        } else {
+          this.renderOptions(data.options);
+        }
       }
 
     } catch (err: any) {
@@ -481,8 +581,8 @@ export class PromptPanel {
       this.addResultBubble(data.result);
       this.messages.push({ role: 'assistant', text: data.result });
 
-      // Offer follow-up options
-      this.renderOptions(['Set this up to run automatically', "Thanks, that's all!"]);
+      // Offer follow-up options via takeover
+      this.enterTakeover('What next?', ['Set this up to run automatically', "Thanks, that's all!"]);
     } catch (err: any) {
       this.setWorking(false);
       this.showError(err.message || 'Execution failed');
@@ -545,31 +645,48 @@ export class PromptPanel {
     const style = document.createElement('style');
     style.id = 'prompt-panel-styles';
     style.textContent = `
-      @keyframes prompt-appear {
-        from { opacity: 0; transform: translateX(-50%) translateY(40px) scale(0.98); }
-        to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-      }
       .prompt-panel {
         position: absolute;
-        bottom: 12px;
+        bottom: 0;
         left: 50%;
-        transform: translateX(-50%);
-        width: min(449px, calc(100vw - 32px));
+        width: var(--hud-pill-width, 480px);
+        min-width: 300px;
+        max-width: calc(100vw - 24px);
         background: rgba(10,12,20,0.92);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(78,205,196,0.1);
-        border-radius: 28px;
+        border-bottom: none;
+        border-radius: 28px 28px 0 0;
         padding: 14px 24px;
         display: flex;
         flex-direction: column;
         gap: 8px;
-        box-shadow: 0 4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
+        box-shadow: 0 -4px 28px rgba(0,0,0,0.5), 0 0 20px rgba(78,205,196,0.03);
         font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
         color: #e2e8f0;
         box-sizing: border-box;
         z-index: 35;
-        animation: prompt-appear 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+
+        /* Slide animation — hidden by default */
+        visibility: hidden;
+        opacity: 0;
+        transform: translateX(-50%) translateY(100%);
+        pointer-events: none;
+        transition:
+          opacity 0.28s cubic-bezier(0.16,1,0.3,1),
+          transform 0.28s cubic-bezier(0.16,1,0.3,1),
+          visibility 0s linear 0.28s;
+      }
+      .prompt-panel.pp-visible {
+        visibility: visible;
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+        pointer-events: auto;
+        transition:
+          opacity 0.28s cubic-bezier(0.16,1,0.3,1),
+          transform 0.28s cubic-bezier(0.16,1,0.3,1),
+          visibility 0s linear 0s;
       }
 
       /* ── Header ── */
@@ -612,6 +729,12 @@ export class PromptPanel {
       }
       .pp-messages::-webkit-scrollbar { width: 4px; }
       .pp-messages::-webkit-scrollbar-thumb { background: rgba(78,205,196,0.15); border-radius: 4px; }
+      .pp-messages--compact {
+        max-height: min(120px, 20vh);
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        margin-bottom: 2px;
+        padding-bottom: 6px;
+      }
       .pp-msg {
         padding: 8px 12px;
         border-radius: 14px;
@@ -659,6 +782,72 @@ export class PromptPanel {
         transform: translateY(-1px);
       }
       .pp-option-pill:active { transform: translateY(0); }
+
+      /* ── Takeover mode ── */
+      .pp-takeover {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 4px 0;
+        animation: pp-takeover-in 0.22s cubic-bezier(0.16,1,0.3,1);
+      }
+      @keyframes pp-takeover-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .pp-takeover-question {
+        font-size: 14px;
+        font-weight: 600;
+        color: #e2e8f0;
+        text-align: center;
+        padding: 2px 0 4px;
+        line-height: 1.4;
+      }
+      .pp-takeover-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .pp-takeover-card {
+        font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: #e2e8f0;
+        background: rgba(167,139,250,0.06);
+        border: 1px solid rgba(167,139,250,0.2);
+        border-radius: 16px;
+        padding: 16px 20px;
+        cursor: pointer;
+        transition: all 0.18s ease;
+        text-align: center;
+        line-height: 1.4;
+      }
+      .pp-takeover-card:hover {
+        background: rgba(167,139,250,0.15);
+        border-color: rgba(167,139,250,0.4);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 20px rgba(167,139,250,0.12);
+      }
+      .pp-takeover-card:active {
+        transform: translateY(0);
+      }
+      .pp-takeover-skip {
+        font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
+        font-size: 11px;
+        font-weight: 500;
+        color: #4a5568;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 6px 12px;
+        align-self: center;
+        transition: color 0.15s;
+        letter-spacing: 0.3px;
+      }
+      .pp-takeover-skip:hover {
+        color: #94a3b8;
+        text-decoration: underline;
+      }
 
       /* ── Build button ── */
       .pp-build-row {
