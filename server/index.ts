@@ -316,8 +316,12 @@ const NOTION_TOOLS: Anthropic.Tool[] = [
 
 // ── Legacy Notion API helpers ───────────────────────────────────────────────
 
-/** Resolve Notion token: prefer env var, fallback to MCP config */
-function getNotionToken(): string {
+/** Resolve Notion token: prefer session key, then env var, then MCP config */
+function getNotionToken(sessionId?: string | null): string {
+  if (sessionId) {
+    const sessionToken = getKey(sessionId, 'notionToken');
+    if (sessionToken) return sessionToken;
+  }
   if (process.env.NOTION_TOKEN) return process.env.NOTION_TOKEN;
   // Extract from MCP Notion server config if available
   const notionConfig = mcpHub['configs']?.get?.('notion') as MCPServerConfig | undefined;
@@ -331,8 +335,8 @@ function getNotionToken(): string {
   return '';
 }
 
-async function notionSearch(query: string): Promise<string> {
-  const notionToken = getNotionToken();
+async function notionSearch(query: string, sessionId?: string | null): Promise<string> {
+  const notionToken = getNotionToken(sessionId);
   if (!notionToken) return 'No Notion token available.';
   const res = await fetch('https://api.notion.com/v1/search', {
     method: 'POST',
@@ -358,8 +362,8 @@ async function notionSearch(query: string): Promise<string> {
     .join('\n');
 }
 
-async function notionGetPage(pageId: string): Promise<string> {
-  const notionToken = getNotionToken();
+async function notionGetPage(pageId: string, sessionId?: string | null): Promise<string> {
+  const notionToken = getNotionToken(sessionId);
   if (!notionToken) return 'No Notion token available.';
   const [metaRes, blocksRes] = await Promise.all([
     fetch(`https://api.notion.com/v1/pages/${pageId}`, {
@@ -418,8 +422,8 @@ async function notionGetPage(pageId: string): Promise<string> {
   return parts.join('\n\n');
 }
 
-async function notionQueryDatabase(databaseId: string, filter?: string): Promise<string> {
-  const notionToken = getNotionToken();
+async function notionQueryDatabase(databaseId: string, filter?: string, sessionId?: string | null): Promise<string> {
+  const notionToken = getNotionToken(sessionId);
   if (!notionToken) return 'No Notion token available.';
 
   // Build Notion API filter from plain-text hint
@@ -551,14 +555,14 @@ function stripDoneTasks(text: string): string {
     .trim();
 }
 
-async function executeLegacyTool(name: string, input: Record<string, string>): Promise<string> {
+async function executeLegacyTool(name: string, input: Record<string, string>, sessionId?: string | null): Promise<string> {
   switch (name) {
     case 'notion_search':
-      return notionSearch(input.query);
+      return notionSearch(input.query, sessionId);
     case 'notion_get_page':
-      return notionGetPage(input.page_id);
+      return notionGetPage(input.page_id, sessionId);
     case 'notion_query_database':
-      return notionQueryDatabase(input.database_id, input.filter);
+      return notionQueryDatabase(input.database_id, input.filter, sessionId);
     default:
       return `Unknown tool: ${name}`;
   }
@@ -1056,7 +1060,7 @@ async function processAIAgent(
     const mcpTools = mcpHub.getAllTools();
     // Always include legacy Notion tools when a Notion token is available — they call
     // the Notion REST API directly and work even when MCP query-data-source is broken.
-    const legacyNotionTools = getNotionToken()
+    const legacyNotionTools = getNotionToken(sessionId)
       ? NOTION_TOOLS.map(t => ({ name: t.name, description: t.description || '', inputSchema: t.input_schema }))
       : [];
 
@@ -1075,7 +1079,7 @@ async function processAIAgent(
       if (name.includes('__')) {
         return mcpHub.executeAnthropicToolCall(name, args);
       }
-      return executeLegacyTool(name, args as Record<string, string>);
+      return executeLegacyTool(name, args as Record<string, string>, sessionId);
     };
 
     const result = await callGeminiWithTools(model, systemPrompt, input, geminiTools, executeTool, maxSteps, resolveGeminiKey(sessionId));
@@ -1091,7 +1095,7 @@ async function processAIAgent(
   // Collect all available tools
   const mcpTools = mcpHub.getAnthropicTools();
   // Always include legacy Notion tools when a Notion token is available (MCP query-data-source is broken)
-  const legacyTools = getNotionToken() ? NOTION_TOOLS : [];
+  const legacyTools = getNotionToken(sessionId) ? NOTION_TOOLS : [];
   const allTools = [...mcpTools, ...legacyTools];
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: input }];
@@ -1211,7 +1215,7 @@ MANDATORY RULES — follow these exactly:
   // MCP notion tools (notion__API_query_data_source etc.) bypass our filter.
   // Also exclude notion_get_page — agents use it to fetch Done pages found via search.
   const NOTION_TOOLS_RESTRICTED = NOTION_TOOLS.filter(t => t.name !== 'notion_get_page');
-  const isNotionWithToken = buildingType === 'notion' && !!getNotionToken();
+  const isNotionWithToken = buildingType === 'notion' && !!getNotionToken(sessionId);
   const legacyTools = isNotionWithToken
     ? NOTION_TOOLS_RESTRICTED.map(t => ({ name: t.name, description: t.description || '', inputSchema: t.input_schema }))
     : [];
@@ -1613,7 +1617,7 @@ app.post('/api/sensor', async (req, res) => {
   }
 
   // Legacy Notion path
-  if (!getNotionToken()) {
+  if (!getNotionToken(sessionId)) {
     res.json({ summary: 'No Notion token configured and no MCP server connected.' });
     return;
   }
@@ -1657,7 +1661,7 @@ If there is nothing relevant, say so briefly.`;
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const block of response.content) {
           if (block.type !== 'tool_use') continue;
-          const result = await executeLegacyTool(block.name, block.input as Record<string, string>);
+          const result = await executeLegacyTool(block.name, block.input as Record<string, string>, sessionId);
           toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
         }
         messages.push({ role: 'user', content: toolResults });
@@ -1685,6 +1689,7 @@ app.get('/api/health', (req, res) => {
     notionTargetId: process.env.NOTION_TARGET_ID || '(not set)',
     hasSessionAnthropicKey: !!keyStatus.anthropicKey,
     hasSessionGeminiKey: !!keyStatus.geminiKey,
+    hasSessionNotionToken: !!keyStatus.notionToken,
     mcpServers: mcpHub.connectedCount,
     mcpTools: mcpHub.getAllTools().length,
     webhookPaths: webhookRegistrations.size,

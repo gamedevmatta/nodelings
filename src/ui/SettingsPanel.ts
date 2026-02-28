@@ -26,7 +26,7 @@ export class SettingsPanel {
       </div>
       <div class="settings-divider"></div>
       <div class="settings-section">
-        <label class="settings-label">Your AI Keys</label>
+        <label class="settings-label">Your Keys</label>
         <div class="settings-key-note">Keys are encrypted and stored server-side. Never exposed to the browser.</div>
         <div class="settings-key-row">
           <span class="settings-key-label">Anthropic</span>
@@ -37,6 +37,11 @@ export class SettingsPanel {
           <span class="settings-key-label">Gemini</span>
           <input type="password" class="settings-key-input" id="settings-gemini-key" placeholder="AIza…" autocomplete="new-password" spellcheck="false" />
           <span class="settings-key-saved" id="settings-gemini-saved" style="display:none">●●●● saved</span>
+        </div>
+        <div class="settings-key-row">
+          <span class="settings-key-label">Notion</span>
+          <input type="password" class="settings-key-input" id="settings-notion-key" placeholder="ntn_…" autocomplete="new-password" spellcheck="false" />
+          <span class="settings-key-saved" id="settings-notion-saved" style="display:none">●●●● saved</span>
         </div>
         <div class="settings-key-actions">
           <button class="settings-save-btn">Save Keys</button>
@@ -114,8 +119,10 @@ export class SettingsPanel {
 
       const anthropicSaved = this.element.querySelector('#settings-anthropic-saved') as HTMLElement;
       const geminiSaved = this.element.querySelector('#settings-gemini-saved') as HTMLElement;
+      const notionSaved = this.element.querySelector('#settings-notion-saved') as HTMLElement;
       const anthropicInput = this.element.querySelector('#settings-anthropic-key') as HTMLInputElement;
       const geminiInput = this.element.querySelector('#settings-gemini-key') as HTMLInputElement;
+      const notionInput = this.element.querySelector('#settings-notion-key') as HTMLInputElement;
 
       if (status.anthropicKey) {
         anthropicSaved.style.display = 'inline';
@@ -131,6 +138,13 @@ export class SettingsPanel {
         geminiSaved.style.display = 'none';
         geminiInput.placeholder = 'AIza…';
       }
+      if (status.notionToken) {
+        notionSaved.style.display = 'inline';
+        notionInput.placeholder = '(saved — paste to replace)';
+      } else {
+        notionSaved.style.display = 'none';
+        notionInput.placeholder = 'ntn_…';
+      }
     } catch {
       // Session not yet created or server offline
     }
@@ -139,11 +153,13 @@ export class SettingsPanel {
   private async saveKeys() {
     const anthropicInput = this.element.querySelector('#settings-anthropic-key') as HTMLInputElement;
     const geminiInput = this.element.querySelector('#settings-gemini-key') as HTMLInputElement;
+    const notionInput = this.element.querySelector('#settings-notion-key') as HTMLInputElement;
     const statusEl = this.element.querySelector('.settings-key-status') as HTMLElement;
 
     const body: Record<string, string> = {};
     if (anthropicInput.value.trim()) body.anthropicKey = anthropicInput.value.trim();
     if (geminiInput.value.trim()) body.geminiKey = geminiInput.value.trim();
+    if (notionInput.value.trim()) body.notionToken = notionInput.value.trim();
 
     if (Object.keys(body).length === 0) {
       statusEl.textContent = 'No keys entered.';
@@ -162,6 +178,7 @@ export class SettingsPanel {
       if (res.ok) {
         anthropicInput.value = '';
         geminiInput.value = '';
+        notionInput.value = '';
         statusEl.textContent = 'Keys saved!';
         statusEl.style.color = '#4ecdc4';
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
@@ -184,7 +201,7 @@ export class SettingsPanel {
     try {
       const res = await apiFetch('/api/session/keys', {
         method: 'PUT',
-        body: JSON.stringify({ anthropicKey: '', geminiKey: '' }),
+        body: JSON.stringify({ anthropicKey: '', geminiKey: '', notionToken: '' }),
       });
       if (res.ok) {
         statusEl.textContent = 'Keys cleared.';
