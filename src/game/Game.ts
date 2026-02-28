@@ -13,7 +13,6 @@ import { SettingsPanel } from '../ui/SettingsPanel';
 import { TicketsPage } from '../ui/TicketsPage';
 import { NodeInfoPanel } from '../ui/NodeInfoPanel';
 import { LLMBridge } from '../agent/LLMBridge';
-import { MCPPanel } from '../ui/MCPPanel';
 import { TicketStore } from './TicketStore';
 import { initSession, apiFetch } from '../api';
 
@@ -35,7 +34,6 @@ export class Game {
   settingsPanel: SettingsPanel;
   ticketsPage: TicketsPage;
   nodeInfoPanel: NodeInfoPanel;
-  mcpPanel: MCPPanel;
 
   activePage: 'orchestrate' | 'tickets' = 'orchestrate';
 
@@ -118,12 +116,10 @@ export class Game {
     this.graphViewer  = new GraphViewer(overlay);
     this.hud          = new HUD(overlay, this);
     this.settingsPanel = new SettingsPanel(overlay, this.llm);
-    this.mcpPanel     = new MCPPanel(overlay);
-    this.settingsPanel.onOpenMCP = () => this.mcpPanel.toggle();
     this.ticketsPage  = new TicketsPage(overlay, this);
     this.nodeInfoPanel = new NodeInfoPanel(overlay);
     this.nodeInfoPanel.onAddPrompt = (building, payload) => this.addPromptToBuilding(building, payload);
-    this.nodeInfoPanel.onOpenMCP = () => this.mcpPanel.toggle();
+    this.nodeInfoPanel.onOpenMCP = () => this.settingsPanel.showTab('integrations');
 
     // Handle resize
     window.addEventListener('resize', () => this.resize());
