@@ -582,9 +582,12 @@ export class Game {
 
       // If agent needs clarification, pause and ask the user
       if (result.startsWith('QUESTION:')) {
-        const question = result.slice('QUESTION:'.length).trim();
+        const raw = result.slice('QUESTION:'.length).trim();
+        const parts = raw.split('|');
+        const question = parts[0];
+        const options = parts.length > 1 ? parts.slice(1) : undefined;
         nodeling.setState('idle');
-        const answer = await this.promptPanel.askWorkflowQuestion(question);
+        const answer = await this.promptPanel.askWorkflowQuestion(question, options);
         nodeling.setState('working');
         this.promptPanel.narrate(`Got it — retrying at ${label}...`);
         result = await this.processBuildingDirect(building, `${payload}\n\nUser clarification: ${answer}`);

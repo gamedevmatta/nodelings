@@ -61,6 +61,15 @@ export class HUD {
     this.container.appendChild(this.element);
     this.container.appendChild(this.shortcutsPanel);
 
+    // Broadcast pill width as CSS variable for PromptPanel to match
+    const pill = this.element.querySelector('.hud-pill') as HTMLElement;
+    const setWidth = () => {
+      const w = pill.getBoundingClientRect().width;
+      if (w > 0) document.documentElement.style.setProperty('--hud-pill-width', `${w}px`);
+    };
+    setWidth(); // eager first measurement
+    new ResizeObserver(setWidth).observe(pill);
+
     // Settings button
     this.element.querySelector('.hud-nav-settings')!.addEventListener('click', () => {
       this.game.settingsPanel.toggle();
