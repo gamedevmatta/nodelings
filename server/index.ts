@@ -1236,7 +1236,7 @@ MANDATORY RULES — follow these exactly:
 
     const executeTool = async (name: string, args: Record<string, any>): Promise<string> => {
       if (name.includes('__')) return mcpHub.executeAnthropicToolCall(name, args);
-      return executeLegacyTool(name, args as Record<string, string>);
+      return executeLegacyTool(name, args as Record<string, string>, sessionId);
     };
 
     const model = GEMINI_MODEL_MAP[config.model] || 'gemini-2.0-flash';
@@ -1293,7 +1293,7 @@ MANDATORY RULES — follow these exactly:
           if (block.name.includes('__')) {
             result = await mcpHub.executeAnthropicToolCall(block.name, block.input as Record<string, any>);
           } else {
-            result = await executeLegacyTool(block.name, block.input as Record<string, string>);
+            result = await executeLegacyTool(block.name, block.input as Record<string, string>, sessionId);
           }
           toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
         } catch (err: any) {
