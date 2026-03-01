@@ -355,8 +355,9 @@ if (fs.existsSync(distPath)) {
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
-app.listen(PORT, async () => {
-  console.log(`[nodelings-server] listening on http://localhost:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, async () => {
+  console.log(`[nodelings-server] listening on http://${HOST}:${PORT}`);
   console.log(`  Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓' : '✗ missing'}`);
   console.log(`  Gemini key:    ${GEMINI_API_KEY ? '✓' : '✗ missing'}`);
   console.log(`  Active AI:     ${getBackend() || 'none'}`);
