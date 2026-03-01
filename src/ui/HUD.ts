@@ -98,14 +98,14 @@ export class HUD {
   }
 
   private readonly BUILDING_LABELS: Record<string, string> = {
-    schedule: 'Trigger', gmail: 'Read', http_request: 'Send',
-    scraper: 'Search', ai_agent: 'Think', llm_chain: 'Humanize',
-    if_node: 'Decide', set_node: 'Transform', wait_node: 'Wait', code_node: 'Code',
-    gpu_core: 'GPU Core', llm_node: 'Paper', webhook: 'Webhook',
-    image_gen: 'Printer', deploy_node: 'Deploy', schedule2: 'Schedule',
-    email_trigger: 'Email', switch_node: 'Switch', merge_node: 'Merge',
-    gmail2: 'Gmail', slack: 'Slack', google_sheets: 'Sheets', notion: 'Notion',
-    airtable: 'Airtable', whatsapp: 'WhatsApp',
+    desk:           'Desk',
+    meeting_room:   'Meeting Room',
+    whiteboard:     'Whiteboard',
+    task_wall:      'Task Wall',
+    break_room:     'Break Room',
+    server_rack:    'Server Rack',
+    library:        'Library',
+    coffee_machine: 'Coffee Machine',
   };
 
   update() {

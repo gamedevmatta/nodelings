@@ -1515,12 +1515,53 @@ function enqueueWebhook(path: string, payload: string, source: string) {
   console.log(`[Webhook] ← ${path} (${payload.length} bytes from ${source}) [${queue.length} queued]`);
 }
 
+// ── Chat endpoint — LLM-driven Nodeling conversations ─────────────────────
+
+app.post('/api/chat', async (req, res) => {
+  const { prompt, context } = req.body as { prompt: string; context: string };
+  if (!prompt) {
+    res.status(400).json({ error: 'Missing prompt' });
+    return;
+  }
+
+  const sessionId = getSessionId(req);
+  if (!getBackend(sessionId)) {
+    res.status(503).json({ error: 'No AI API key configured' });
+    return;
+  }
+
+  try {
+    const backend = getBackend(sessionId);
+    const systemPrompt = `You are a friendly Nodeling coworker in a virtual coworking space. You help with tasks, collaborate on ideas, and keep things productive and fun. Respond concisely (2-3 sentences). Here's the context:\n${context}`;
+
+    let response = '';
+    if (backend === 'anthropic') {
+      const apiKey = getKey(sessionId, 'anthropicKey') || process.env.ANTHROPIC_API_KEY || '';
+      const client = apiKey === process.env.ANTHROPIC_API_KEY ? anthropic : new Anthropic({ apiKey });
+      const msg = await client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      response = (msg.content[0] as any).text || '';
+    } else {
+      const apiKey = getKey(sessionId, 'geminiKey') || GEMINI_API_KEY;
+      const result = await callGemini('gemini-2.0-flash', systemPrompt, prompt, 512, apiKey);
+      response = result.text;
+    }
+
+    res.json({ response });
+  } catch (err: any) {
+    console.error('[/api/chat] Error:', err.message);
+    res.status(500).json({ error: err.message || 'Chat failed' });
+  }
+});
+
 // Allowed building types for validation
 const ALLOWED_BUILDING_TYPES = new Set([
-  'gpu_core', 'llm_node', 'webhook', 'image_gen', 'deploy_node', 'schedule',
-  'email_trigger', 'if_node', 'switch_node', 'merge_node', 'wait_node',
-  'http_request', 'set_node', 'code_node', 'gmail', 'slack', 'google_sheets',
-  'notion', 'airtable', 'whatsapp', 'scraper', 'ai_agent', 'llm_chain',
+  'desk', 'meeting_room', 'whiteboard', 'task_wall',
+  'break_room', 'server_rack', 'library', 'coffee_machine',
 ]);
 
 app.post('/api/process', async (req, res) => {
@@ -1536,47 +1577,41 @@ app.post('/api/process', async (req, res) => {
   try {
     let result: { outputPayload: string; metadata: Record<string, any> };
 
-    // HTTP request building — doesn't need Anthropic API key
-    if (buildingType === 'http_request') {
-      result = await processHTTPRequest(inputPayload, buildingConfig);
-      res.json(result);
-      return;
-    }
-
     if (!getBackend(sessionId)) {
       res.status(503).json({ error: 'No AI API key configured (set ANTHROPIC_API_KEY or GEMINI_API_KEY in .env)' });
       return;
     }
 
-    if (buildingType === 'ai_agent') {
-      // AI Agent — full agentic loop with ALL MCP tools
-      result = await processAIAgent(inputPayload, buildingConfig, sessionId);
-    } else if (buildingType === 'llm_node' || buildingType === 'llm_chain') {
-      // One-shot AI call
-      result = await processAISimple(buildingType, inputPayload, buildingConfig, sessionId);
-    } else if (MCP_BUILDING_TYPES.includes(buildingType)) {
-      // Integration buildings — route through MCP
-      const serverName = mcpHub.findServerForBuilding(buildingType);
-      if (serverName) {
-        result = await processWithMCP(serverName, buildingType, inputPayload, buildingConfig, sessionId);
-        // For Notion: strip any Done-task content the agent managed to include despite instructions
-        if (buildingType === 'notion') {
-          result = { ...result, outputPayload: stripDoneTasks(result.outputPayload) };
-        }
-      } else {
-        result = {
-          outputPayload: `[${buildingType}] No MCP server connected for this service. Add one in Settings > MCP Servers.`,
-          metadata: { buildingType, needsMCP: true },
-        };
-      }
-    } else if (buildingType === 'code_node') {
-      result = { outputPayload: `[Code executed] Input: ${inputPayload}`, metadata: { buildingType } };
-    } else if (buildingType === 'image_gen') {
-      result = { outputPayload: `[Image generated for: "${inputPayload}"]`, metadata: { buildingType } };
-    } else if (buildingType === 'gpu_core') {
-      result = { outputPayload: `[GPU processed] ${inputPayload}`, metadata: { buildingType } };
+    // All coworking furniture routes through the AI for processing
+    const furniturePrompts: Record<string, string> = {
+      desk:           'You are a focused work assistant at a desk. Process the following task concisely:',
+      meeting_room:   'You are facilitating a team meeting. Summarize and organize this discussion:',
+      whiteboard:     'You are brainstorming on a whiteboard. Generate creative ideas for:',
+      task_wall:      'You are organizing a task board. Break this down into actionable items:',
+      server_rack:    'You are a compute server processing a request. Analyze and respond to:',
+      library:        'You are a research librarian. Find relevant information about:',
+      break_room:     'You are a friendly coworker in the break room. Chat casually about:',
+      coffee_machine: 'You are a coffee machine with personality. Serve up a response to:',
+    };
+
+    const systemPrompt = furniturePrompts[buildingType] || 'Process the following:';
+    const backend = getBackend(sessionId);
+
+    if (backend === 'anthropic') {
+      const apiKey = getKey(sessionId, 'anthropicKey') || process.env.ANTHROPIC_API_KEY || '';
+      const client = apiKey === process.env.ANTHROPIC_API_KEY ? anthropic : new Anthropic({ apiKey });
+      const msg = await client.messages.create({
+        model: buildingConfig?.model || 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: inputPayload }],
+      });
+      const text = (msg.content[0] as any).text || '';
+      result = { outputPayload: text, metadata: { buildingType, model: 'claude-sonnet-4-20250514' } };
     } else {
-      result = { outputPayload: inputPayload, metadata: { buildingType } };
+      const apiKey = getKey(sessionId, 'geminiKey') || GEMINI_API_KEY;
+      const gemResult = await callGemini('gemini-2.0-flash', systemPrompt, inputPayload, 1024, apiKey);
+      result = { outputPayload: gemResult.text, metadata: { buildingType, model: 'gemini-2.0-flash' } };
     }
 
     res.json(result);

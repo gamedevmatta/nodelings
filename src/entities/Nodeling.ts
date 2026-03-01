@@ -1,17 +1,7 @@
 import { Entity } from './Entity';
 import type { Item } from './Item';
-import type { NodeGraph } from '../agent/NodeGraph';
 
 export type NodelingState = 'dormant' | 'idle' | 'moving' | 'working' | 'confused' | 'happy' | 'at_node';
-
-/** Evaluated at the branch point: true arm runs if condition holds, else false arm */
-export interface NodelingBranch {
-  atX:      number;
-  atY:      number;
-  condition: 'carrying_item' | 'not_carrying';
-  truePath:  { x: number; y: number }[];
-  falsePath: { x: number; y: number }[];
-}
 
 export class Nodeling extends Entity {
   state: NodelingState = 'dormant';
@@ -32,23 +22,12 @@ export class Nodeling extends Entity {
   /** Carrying an item */
   carriedItem: Item | null = null;
 
-  /** Brain graph */
-  graph: NodeGraph | null = null;
-
-  /** Pending branch to evaluate when the main path finishes */
-  pendingBranch: NodelingBranch | null = null;
-
-  /** Node interaction — paused at an adjacent building on a manual path */
+  /** Node interaction — paused at an adjacent building */
   nodeWorkPaused   = false;
   nodeWorkTimer    = 0;
   nodeWorkDuration = 45;
-  atNodeX          = -1;   // gridX of the adjacent building (-1 = none)
-  atNodeY          = -1;   // gridY of the adjacent building
-
-  /** Bounce mode — walk the path endlessly back and forth */
-  bounceMode = false;
-  private _bounceFullPath: { x: number; y: number }[] = []; // includes start tile
-  private _bounceForward  = true;
+  atNodeX          = -1;
+  atNodeY          = -1;
 
   /** Animation */
   animTime = 0;
@@ -62,7 +41,7 @@ export class Nodeling extends Entity {
 
   /** Brain dome glow color */
   domeColor = '#555555';
-  /** Base idle color (set by role on spawn, persists across state changes) */
+  /** Base idle color (set by role on spawn) */
   baseColor = '#4ecdc4';
 
   constructor(name: string, gx: number, gy: number) {
@@ -91,41 +70,18 @@ export class Nodeling extends Entity {
       case 'confused': this.domeColor = '#e74c3c'; break;
       case 'happy': this.domeColor = '#2ecc71'; break;
       case 'dormant': this.domeColor = '#555555'; break;
-      case 'at_node': break; // domeColor set directly to building accent by Game.tickNodeInteractions
+      case 'at_node': break;
     }
   }
 
   /** Start moving along a path */
   startPath(path: { x: number; y: number }[]) {
     if (path.length === 0) return;
-    this.bounceMode = false; // cancel any active bounce
     this.path = path;
     this.moveProgress = 0;
     this.fromX = this.gridX;
     this.fromY = this.gridY;
-    this.pendingBranch = null; // clear any stale branch
     this.setState('moving');
-  }
-
-  /** Start moving along a path and bounce back and forth forever */
-  startBouncePath(path: { x: number; y: number }[]) {
-    if (path.length === 0) return;
-    // Store the full route (current tile + all steps) so we can reverse it
-    this._bounceFullPath = [{ x: this.gridX, y: this.gridY }, ...path];
-    this._bounceForward  = true;
-    this.bounceMode      = true;
-    this.path            = path.slice();
-    this.moveProgress    = 0;
-    this.fromX           = this.gridX;
-    this.fromY           = this.gridY;
-    this.pendingBranch   = null;
-    this.setState('moving');
-  }
-
-  /** Start moving along a main path; evaluate branch when it finishes */
-  startBranchingPath(mainSteps: { x: number; y: number }[], branch: NodelingBranch | null) {
-    this.startPath(mainSteps);
-    this.pendingBranch = branch;
   }
 
   tick() {
@@ -137,7 +93,7 @@ export class Nodeling extends Entity {
       this.bobOffset = Math.sin(this.animTime * 0.1) * 2;
     }
 
-    // Movement — frozen while stopped at a node
+    // Movement — frozen while stopped at a building
     if (this.nodeWorkPaused) return;
 
     if (this.state === 'moving' && this.path.length > 0) {
@@ -151,41 +107,7 @@ export class Nodeling extends Entity {
         this.fromY = this.gridY;
         this.moveProgress = 0;
         if (this.path.length === 0) {
-          // Check for a pending branch to evaluate at this tile
-          if (
-            this.pendingBranch &&
-            this.gridX === this.pendingBranch.atX &&
-            this.gridY === this.pendingBranch.atY
-          ) {
-            const branch = this.pendingBranch;
-            this.pendingBranch = null;
-            const condMet =
-              branch.condition === 'carrying_item'
-                ? this.carriedItem !== null
-                : this.carriedItem === null;
-            const nextPath = condMet ? branch.truePath : branch.falsePath;
-            if (nextPath.length > 0) {
-              this.path = nextPath;
-              this.fromX = this.gridX;
-              this.fromY = this.gridY;
-              this.moveProgress = 0;
-              // state stays 'moving' — no idle transition
-            } else {
-              this.setState('idle');
-            }
-          } else if (this.bounceMode) {
-            // Bounce: flip direction and restart along the stored route
-            this._bounceForward = !this._bounceForward;
-            this.path = this._bounceForward
-              ? this._bounceFullPath.slice(1)
-              : [...this._bounceFullPath].reverse().slice(1);
-            this.fromX        = this.gridX;
-            this.fromY        = this.gridY;
-            this.moveProgress = 0;
-            // state stays 'moving' — no idle transition
-          } else {
-            this.setState('idle');
-          }
+          this.setState('idle');
         }
       }
       // Interpolate position
@@ -217,7 +139,7 @@ export class Nodeling extends Entity {
 
   private getWorldFromGrid(gx: number, gy: number) {
     return {
-      x: gx * 48, // Camera.TILE_SIZE
+      x: gx * 48,
       y: gy * 48,
     };
   }

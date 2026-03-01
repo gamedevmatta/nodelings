@@ -1,10 +1,10 @@
 import { Entity } from './Entity';
 
-export type ItemType = 'prompt' | 'completion';
+export type ItemType = 'task' | 'result';
 
 export const ITEM_NAMES: Record<ItemType, string> = {
-  prompt: 'Prompt',
-  completion: 'Completion',
+  task: 'Task',
+  result: 'Result',
 };
 
 export class Item extends Entity {

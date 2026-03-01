@@ -188,13 +188,18 @@ export class World {
     }
   }
 
-  /** Create the starting workspace layout */
+  /** Create the starting coworking space layout */
   static createWorkspace(): World {
     const world = new World();
 
-    // Single Nodeling — 1 tile right of the build column (x=5)
+    // Place some starter furniture
+    world.addEntity(new Building('desk', 3, 3));
+    world.addEntity(new Building('whiteboard', 5, 2));
+    world.addEntity(new Building('coffee_machine', 8, 3));
+
+    // Your first Nodeling coworker
     const nodeling1 = new Nodeling('Sparky', 6, 5);
-    nodeling1.role = 'AI Strategist';
+    nodeling1.role = 'Creative Lead';
     world.addEntity(nodeling1);
 
     return world;

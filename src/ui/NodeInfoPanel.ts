@@ -18,8 +18,8 @@ interface NodeMeta {
   inputs: NodeInput[];
 }
 
-/** Building types that route through MCP servers */
-const MCP_BUILDING_TYPES = ['notion', 'slack', 'gmail', 'google_sheets', 'airtable', 'whatsapp', 'scraper'];
+/** Building types that route through MCP servers for external integrations */
+const MCP_BUILDING_TYPES = ['task_wall'];
 
 interface MCPStatusCache {
   timestamp: number;
@@ -28,288 +28,100 @@ interface MCPStatusCache {
 
 const NODE_META: Record<string, NodeMeta> = {
 
-  // ── BASICS (cyan) ──────────────────────────────────────────────────────────
+  // ── Coworking Furniture ──────────────────────────────────────────────────
 
-  schedule: {
-    label: 'Trigger',
-    desc: 'Starts a workflow automatically on a recurring schedule.',
-    accent: '#6366f1',
-    inputs: [
-      { key: 'frequency', label: 'Frequency', type: 'select',
-        options: ['Every minute', 'Every hour', 'Every day', 'Every week', 'Custom cron'],
-        default: 'Every hour' },
-      { key: 'timezone', label: 'Timezone', type: 'select',
-        options: ['UTC', 'US/Eastern', 'US/Pacific', 'Europe/London', 'Asia/Tokyo'],
-        default: 'UTC' },
-      { key: 'active', label: 'Active', type: 'toggle', default: 'true' },
-    ],
-  },
-
-  email_trigger: {
-    label: 'Email',
-    desc: 'Triggers a workflow when a new email matches the specified criteria.',
-    accent: '#0ea5e9',
-    inputs: [
-      { key: 'mailbox',  label: 'Mailbox',       type: 'text',   placeholder: 'inbox@company.com' },
-      { key: 'filter',   label: 'Filter',         type: 'text',   placeholder: 'from:boss@company.com' },
-      { key: 'markRead', label: 'Mark as read',   type: 'toggle', default: 'true' },
-    ],
-  },
-
-  // ── APP INTEGRATIONS ───────────────────────────────────────────────────────
-
-  notion: {
-    label: 'Notion',
-    desc: 'Reads and writes pages, databases, and blocks in your Notion workspace.',
-    accent: '#e2e8f0',
-    inputs: [
-      { key: 'database_id', label: 'Database / Page ID', type: 'text', placeholder: 'abc123...' },
-      { key: 'action', label: 'Action', type: 'select',
-        options: ['Read page', 'Query database', 'Create page', 'Update page', 'Search'],
-        default: 'Read page' },
-      { key: 'filter', label: 'Filter', type: 'text', placeholder: 'status = "In Progress"' },
-    ],
-  },
-
-  slack: {
-    label: 'Slack',
-    desc: 'Sends messages, reads channels, and interacts with your Slack workspace.',
-    accent: '#7c3aed',
-    inputs: [
-      { key: 'channel', label: 'Channel', type: 'text', placeholder: '#general' },
-      { key: 'action', label: 'Action', type: 'select',
-        options: ['Send message', 'Read messages', 'Create channel', 'React to message'],
-        default: 'Send message' },
-      { key: 'message', label: 'Message', type: 'textarea', placeholder: 'Hello, {{name}}!' },
-    ],
-  },
-
-  gmail: {
-    label: 'Gmail',
-    desc: 'Reads incoming emails and passes their content into your workflow.',
-    accent: '#ef4444',
-    inputs: [
-      { key: 'mailbox',  label: 'Mailbox',       type: 'text',   placeholder: 'you@example.com' },
-      { key: 'filter',   label: 'Filter',         type: 'text',   placeholder: 'from:boss@company.com subject:urgent' },
-      { key: 'markRead', label: 'Mark as read',   type: 'toggle', default: 'true' },
-    ],
-  },
-
-  google_sheets: {
-    label: 'Sheets',
-    desc: 'Reads rows, appends data, and updates cells in Google Sheets.',
-    accent: '#22c55e',
-    inputs: [
-      { key: 'spreadsheet_id', label: 'Spreadsheet ID', type: 'text', placeholder: '1BxiMVs...' },
-      { key: 'sheet', label: 'Sheet Name', type: 'text', placeholder: 'Sheet1', default: 'Sheet1' },
-      { key: 'action', label: 'Action', type: 'select',
-        options: ['Read rows', 'Append row', 'Update cell', 'Clear range'],
-        default: 'Read rows' },
-    ],
-  },
-
-  airtable: {
-    label: 'Airtable',
-    desc: 'Queries, creates, and updates records in your Airtable bases.',
-    accent: '#2563eb',
-    inputs: [
-      { key: 'base_id', label: 'Base ID', type: 'text', placeholder: 'appXXXXXXXX' },
-      { key: 'table', label: 'Table Name', type: 'text', placeholder: 'Tasks' },
-      { key: 'action', label: 'Action', type: 'select',
-        options: ['List records', 'Create record', 'Update record', 'Delete record'],
-        default: 'List records' },
-    ],
-  },
-
-  whatsapp: {
-    label: 'WhatsApp',
-    desc: 'Sends and receives messages via the WhatsApp Business API.',
-    accent: '#22c55e',
-    inputs: [
-      { key: 'phone',   label: 'Phone Number', type: 'text',     placeholder: '+1234567890' },
-      { key: 'message', label: 'Message',       type: 'textarea', placeholder: 'Hello from your workflow!' },
-      { key: 'template', label: 'Use Template', type: 'toggle',  default: 'false' },
-    ],
-  },
-
-  http_request: {
-    label: 'HTTP',
-    desc: 'Makes an HTTP request to any external URL or API endpoint.',
-    accent: '#10b981',
-    inputs: [
-      { key: 'url',    label: 'URL',    type: 'text',     placeholder: 'https://api.example.com/data' },
-      { key: 'method', label: 'Method', type: 'select',   options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], default: 'POST' },
-      { key: 'body',   label: 'Body',   type: 'textarea', placeholder: '{ "key": "{{value}}" }' },
-    ],
-  },
-
-  // ── PROCESS (violet) ──────────────────────────────────────────────────────
-
-  scraper: {
-    label: 'Search',
-    desc: 'Fetches and extracts structured content from any web page.',
-    accent: '#a855f7',
-    inputs: [
-      { key: 'url',      label: 'URL',          type: 'text',   placeholder: 'https://example.com/page' },
-      { key: 'selector', label: 'CSS Selector', type: 'text',   placeholder: '.article-body p' },
-      { key: 'extract',  label: 'Extract',      type: 'select', options: ['Text', 'HTML', 'Links', 'Images'], default: 'Text' },
-    ],
-  },
-
-  ai_agent: {
-    label: 'Think',
-    desc: 'Runs an autonomous AI agent to reason through multi-step tasks.',
-    accent: '#ec4899',
-    inputs: [
-      { key: 'model',        label: 'Model',         type: 'select',
-        options: ['Claude Opus 4.6', 'Claude Sonnet 4.6', 'GPT-4o', 'Gemini 2.5 Pro', 'Gemini 2.5 Flash', 'Gemini 2.0 Flash'],
-        default: 'Claude Sonnet 4.6' },
-      { key: 'systemPrompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a helpful assistant that...' },
-      { key: 'maxSteps',     label: 'Max Steps',     type: 'number',   placeholder: '10', default: '10' },
-    ],
-  },
-
-  llm_chain: {
-    label: 'Humanize',
-    desc: 'Rewrites content in a natural, human-friendly voice using an LLM.',
-    accent: '#8b5cf6',
-    inputs: [
-      { key: 'tone',   label: 'Tone',         type: 'select',
-        options: ['Friendly', 'Professional', 'Casual', 'Concise', 'Formal'],
-        default: 'Friendly' },
-      { key: 'model',  label: 'Model',         type: 'select',
-        options: ['Claude Haiku 4.5', 'GPT-4o mini', 'Gemini 2.5 Flash', 'Gemini 2.0 Flash'],
-        default: 'Claude Haiku 4.5' },
-      { key: 'prompt', label: 'Instructions',  type: 'textarea', placeholder: 'Rewrite the following to sound more human...' },
-    ],
-  },
-
-  // ── LOGIC (amber) ─────────────────────────────────────────────────────────
-
-  if_node: {
-    label: 'Decide',
-    desc: 'Routes the workflow down a true or false branch based on a condition.',
-    accent: '#fbbf24',
-    inputs: [
-      { key: 'condition',   label: 'Condition',     type: 'text', placeholder: '{{value}} > 100' },
-      { key: 'trueBranch',  label: 'True  →  Label', type: 'text', placeholder: 'Send alert' },
-      { key: 'falseBranch', label: 'False →  Label', type: 'text', placeholder: 'Log & continue' },
-    ],
-  },
-
-  switch_node: {
-    label: 'Switch',
-    desc: 'Routes data to one of several branches based on a field value.',
-    accent: '#d97706',
-    inputs: [
-      { key: 'field', label: 'Field to Match', type: 'text', placeholder: '{{status}}' },
-      { key: 'cases', label: 'Cases', type: 'textarea',
-        placeholder: 'active → notify\npaused → log\ndefault → skip' },
-    ],
-  },
-
-  merge_node: {
-    label: 'Merge',
-    desc: 'Combines two or more incoming data streams into a single output.',
-    accent: '#a78bfa',
-    inputs: [
-      { key: 'mode', label: 'Merge Mode', type: 'select',
-        options: ['Wait for all', 'First response', 'Combine lists', 'Zip by index'],
-        default: 'Wait for all' },
-      { key: 'key', label: 'Join Key', type: 'text', placeholder: 'id (for zip mode)' },
-    ],
-  },
-
-  set_node: {
-    label: 'Transform',
-    desc: 'Maps, renames, or computes new fields from the current workflow data.',
-    accent: '#fbbf24',
-    inputs: [
-      { key: 'field',      label: 'Output Field', type: 'text',   placeholder: 'result.summary' },
-      { key: 'expression', label: 'Expression',   type: 'text',   placeholder: '{{input.text | upper}}' },
-      { key: 'mode',       label: 'Mode',         type: 'select', options: ['Set', 'Append', 'Merge', 'Remove'], default: 'Set' },
-    ],
-  },
-
-  wait_node: {
-    label: 'Wait',
-    desc: 'Pauses the workflow for a fixed duration before passing data along.',
-    accent: '#94a3b8',
-    inputs: [
-      { key: 'duration', label: 'Duration', type: 'number', placeholder: '5',       default: '5' },
-      { key: 'unit',     label: 'Unit',     type: 'select', options: ['Seconds', 'Minutes', 'Hours', 'Days'], default: 'Seconds' },
-    ],
-  },
-
-  code_node: {
-    label: 'Code',
-    desc: 'Runs custom code to transform, filter, or generate workflow data.',
-    accent: '#6366f1',
-    inputs: [
-      { key: 'language', label: 'Language', type: 'select', options: ['JavaScript', 'Python', 'TypeScript'], default: 'JavaScript' },
-      { key: 'code',     label: 'Code',     type: 'textarea', placeholder: '// return transformed data\nreturn { result: input.value * 2 };' },
-    ],
-  },
-
-  // ── INFRASTRUCTURE ─────────────────────────────────────────────────────────
-
-  gpu_core: {
-    label: 'GPU Core',
-    desc: 'Runs GPU-accelerated compute jobs for ML inference or data processing.',
-    accent: '#10b981',
-    inputs: [
-      { key: 'model',      label: 'Model / Task', type: 'text',   placeholder: 'whisper-large' },
-      { key: 'precision',  label: 'Precision',    type: 'select', options: ['FP32', 'FP16', 'BF16', 'INT8'], default: 'FP16' },
-      { key: 'batch_size', label: 'Batch Size',   type: 'number', placeholder: '1', default: '1' },
-    ],
-  },
-
-  image_gen: {
-    label: 'Image Gen',
-    desc: 'Generates images from text prompts using a diffusion model.',
-    accent: '#ec4899',
-    inputs: [
-      { key: 'prompt', label: 'Prompt', type: 'textarea', placeholder: 'A photorealistic cat wearing a space suit...' },
-      { key: 'model',  label: 'Model',  type: 'select',
-        options: ['FLUX.1', 'DALL-E 3', 'Stable Diffusion XL', 'Midjourney'],
-        default: 'FLUX.1' },
-      { key: 'size',   label: 'Size',   type: 'select',
-        options: ['512×512', '1024×1024', '1792×1024', '1024×1792'],
-        default: '1024×1024' },
-    ],
-  },
-
-  deploy_node: {
-    label: 'Deploy',
-    desc: 'Deploys code or triggers a release pipeline on the target environment.',
-    accent: '#f59e0b',
-    inputs: [
-      { key: 'service',  label: 'Service',     type: 'text',   placeholder: 'my-api-server' },
-      { key: 'env',      label: 'Environment', type: 'select', options: ['Production', 'Staging', 'Development'], default: 'Staging' },
-      { key: 'strategy', label: 'Strategy',    type: 'select', options: ['Rolling', 'Blue/Green', 'Canary'], default: 'Rolling' },
-    ],
-  },
-
-  webhook: {
-    label: 'Webhook',
-    desc: 'Listens for incoming HTTP events from external services.',
-    accent: '#3b82f6',
-    inputs: [
-      { key: 'path',   label: 'Path',   type: 'text',   placeholder: '/hooks/my-event' },
-      { key: 'method', label: 'Method', type: 'select', options: ['POST', 'GET', 'PUT'], default: 'POST' },
-      { key: 'secret', label: 'Secret', type: 'text',   placeholder: 'Webhook signing secret' },
-    ],
-  },
-
-  llm_node: {
-    label: 'LLM',
-    desc: 'Calls a language model with a custom prompt and returns the response.',
+  desk: {
+    label: 'Desk',
+    desc: 'A personal workstation where your Nodeling does focused work. Great for writing, coding, and deep thinking.',
     accent: '#4ecdc4',
     inputs: [
-      { key: 'model',  label: 'Model',  type: 'select',
-        options: ['Claude Sonnet 4.6', 'Claude Haiku 4.5', 'GPT-4o', 'Gemini 2.5 Flash', 'Gemini 2.0 Flash'],
+      { key: 'task_type', label: 'Focus Area', type: 'select',
+        options: ['General', 'Writing', 'Coding', 'Research', 'Design'],
+        default: 'General' },
+      { key: 'notes', label: 'Desk Notes', type: 'textarea', placeholder: 'What should this desk be used for?' },
+    ],
+  },
+
+  meeting_room: {
+    label: 'Meeting Room',
+    desc: 'A collaboration space where multiple Nodelings can brainstorm and work together on shared tasks.',
+    accent: '#8b5cf6',
+    inputs: [
+      { key: 'topic', label: 'Meeting Topic', type: 'text', placeholder: 'Sprint planning, design review...' },
+      { key: 'capacity', label: 'Capacity', type: 'select',
+        options: ['2 Nodelings', '4 Nodelings', '6 Nodelings', '8 Nodelings'],
+        default: '4 Nodelings' },
+    ],
+  },
+
+  whiteboard: {
+    label: 'Whiteboard',
+    desc: 'A brainstorming surface for sketching ideas, mapping flows, and planning projects.',
+    accent: '#f59e0b',
+    inputs: [
+      { key: 'board_type', label: 'Board Type', type: 'select',
+        options: ['Freeform', 'Mind Map', 'Flowchart', 'Kanban'],
+        default: 'Freeform' },
+      { key: 'topic', label: 'Topic', type: 'text', placeholder: 'Project roadmap, feature ideas...' },
+    ],
+  },
+
+  task_wall: {
+    label: 'Task Wall',
+    desc: 'A kanban board that connects to Notion or GitHub to display and manage tickets.',
+    accent: '#3b82f6',
+    inputs: [
+      { key: 'source', label: 'Source', type: 'select',
+        options: ['Notion', 'GitHub Issues', 'Linear', 'Manual'],
+        default: 'Manual' },
+      { key: 'project_id', label: 'Project / Board ID', type: 'text', placeholder: 'Enter project ID...' },
+      { key: 'filter', label: 'Filter', type: 'text', placeholder: 'status:in-progress assignee:me' },
+    ],
+  },
+
+  break_room: {
+    label: 'Break Room',
+    desc: 'A cozy spot where Nodelings recharge and socialize. Idle time boosts creativity!',
+    accent: '#ec4899',
+    inputs: [
+      { key: 'vibe', label: 'Vibe', type: 'select',
+        options: ['Chill Lounge', 'Game Corner', 'Quiet Zone', 'Music Room'],
+        default: 'Chill Lounge' },
+    ],
+  },
+
+  server_rack: {
+    label: 'Server Rack',
+    desc: 'The compute backbone of your coworking space. Handles heavy processing and AI inference.',
+    accent: '#10b981',
+    inputs: [
+      { key: 'model', label: 'AI Model', type: 'select',
+        options: ['Claude Sonnet 4.6', 'Claude Haiku 4.5', 'GPT-4o', 'Gemini 2.5 Flash'],
         default: 'Claude Sonnet 4.6' },
-      { key: 'prompt', label: 'Prompt', type: 'textarea', placeholder: 'Enter your prompt...' },
+      { key: 'system_prompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a helpful AI assistant...' },
+    ],
+  },
+
+  library: {
+    label: 'Library',
+    desc: 'A research and reference station. Nodelings come here to look up information and learn new things.',
+    accent: '#6366f1',
+    inputs: [
+      { key: 'topic', label: 'Research Topic', type: 'text', placeholder: 'API design, best practices...' },
+      { key: 'source', label: 'Source', type: 'select',
+        options: ['Web Search', 'Documentation', 'Knowledge Base', 'Papers'],
+        default: 'Web Search' },
+    ],
+  },
+
+  coffee_machine: {
+    label: 'Coffee Machine',
+    desc: 'Grab a quick coffee! Nodelings get a small energy boost after visiting.',
+    accent: '#d97706',
+    inputs: [
+      { key: 'drink', label: 'Default Drink', type: 'select',
+        options: ['Espresso', 'Latte', 'Cappuccino', 'Green Tea', 'Hot Chocolate'],
+        default: 'Latte' },
     ],
   },
 };
@@ -661,68 +473,6 @@ export class NodeInfoPanel {
   // ── Action buttons per building type ──────────────────────────────────────
 
   private buildActionsHTML(b: Building): string {
-    if (b.buildingType === 'webhook') {
-      const config = this.getConfig(b.id);
-      const path = config.path?.trim();
-
-      // Webhook URL display
-      let webhookURLHTML = '';
-      if (path) {
-        const normalized = path.startsWith('/') ? path : '/' + path;
-        const fullUrl = `${window.location.origin}/hooks${normalized}`;
-        webhookURLHTML = `
-          <div class="nip-webhook-url-wrap">
-            <label class="nip-field-label">Webhook URL</label>
-            <div class="nip-webhook-url-row">
-              <code class="nip-webhook-url">${this.escapeHtml(fullUrl)}</code>
-              <button class="nip-webhook-copy" data-url="${this.escapeHtml(fullUrl)}" title="Copy URL">⎘</button>
-            </div>
-            <span class="nip-webhook-hint">POST JSON to this URL to trigger the webhook</span>
-          </div>
-        `;
-      } else {
-        webhookURLHTML = `
-          <div class="nip-webhook-url-wrap">
-            <span class="nip-webhook-hint nip-webhook-hint--warn">Configure a path below to enable external webhooks</span>
-          </div>
-        `;
-      }
-
-      let queueHTML = '';
-      if (b.inventory.length > 0) {
-        const items = b.inventory.slice(-3).map(i => {
-          const text = i.payload || 'Empty prompt';
-          const preview = text.length > 50 ? text.slice(0, 50) + '...' : text;
-          return `<div class="nip-queue-item">${this.escapeHtml(preview)}</div>`;
-        }).join('');
-        queueHTML = `<div class="nip-queue">${items}</div>`;
-      }
-      return `
-        <div class="nip-actions" style="flex-direction:column;align-items:stretch;">
-          ${webhookURLHTML}
-          <div class="nip-prompt-row">
-            <input type="text" class="nip-prompt-text" placeholder="Type a prompt..." />
-            <button class="nip-action-btn nip-action-btn--primary" data-action="add-prompt">+ Add</button>
-          </div>
-          <span class="nip-action-hint">${b.inventory.length} prompt${b.inventory.length !== 1 ? 's' : ''} queued</span>
-          ${queueHTML}
-        </div>`;
-    }
-
-    if (b.buildingType === 'schedule') {
-      const config = this.getConfig(b.id);
-      const active = config.active !== 'false';
-      const frequency = config.frequency || 'Every hour';
-      return `
-        <div class="nip-actions" style="flex-direction:column;align-items:stretch;">
-          <div class="nip-schedule-status">
-            <span class="nip-schedule-dot ${active ? 'nip-schedule-dot--active' : 'nip-schedule-dot--paused'}"></span>
-            <span class="nip-schedule-text">${active ? 'Active' : 'Paused'} — ${frequency}</span>
-          </div>
-          <span class="nip-action-hint">${b.inventory.length} trigger${b.inventory.length !== 1 ? 's' : ''} generated</span>
-        </div>`;
-    }
-
     if (b.isProcessor()) {
       if (b.processing) {
         const pct = Math.round((b.processTimer / b.processTime) * 100);
@@ -737,29 +487,29 @@ export class NodeInfoPanel {
               <div class="nip-progress-wrap">
                 <div class="nip-progress-bar" style="width:${pct}%"></div>
               </div>
-              <span class="nip-action-hint">Processing... ${pct}%</span>
+              <span class="nip-action-hint">Working... ${pct}%</span>
             </div>
             ${payloadPreview}
           </div>`;
       }
       return `
         <div class="nip-actions">
-          <span class="nip-action-hint nip-action-hint--ready">Ready — drop a prompt to process</span>
+          <span class="nip-action-hint nip-action-hint--ready">Ready for tasks</span>
         </div>`;
     }
 
     if (b.isOutput()) {
-      const completions = b.inventory.filter(i => i.itemType === 'completion');
-      const lastCompletion = completions.length > 0 ? completions[completions.length - 1] : null;
+      const results = b.inventory.filter(i => i.itemType === 'result');
+      const lastResult = results.length > 0 ? results[results.length - 1] : null;
       let previewHTML = '';
-      if (lastCompletion && lastCompletion.payload) {
-        const text = lastCompletion.payload;
+      if (lastResult && lastResult.payload) {
+        const text = lastResult.payload;
         const preview = text.length > 120 ? text.slice(0, 120) + '...' : text;
         previewHTML = `<div class="nip-payload-preview">${this.escapeHtml(preview)}</div>`;
       }
       return `
         <div class="nip-actions" style="flex-direction:column;align-items:stretch;">
-          <span class="nip-action-hint">${b.completionsCollected} completion${b.completionsCollected !== 1 ? 's' : ''} collected</span>
+          <span class="nip-action-hint">${results.length} result${results.length !== 1 ? 's' : ''} displayed</span>
           ${previewHTML}
         </div>`;
     }
