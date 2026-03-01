@@ -2,7 +2,6 @@ import type { Game } from '../game/Game';
 import type { Nodeling } from '../entities/Nodeling';
 import type { Ticket } from '../game/TicketStore';
 
-import { NODE_COLORS, NODE_ICONS } from '../agent/nodes';
 
 export class TicketsPage {
   private container: HTMLElement;
@@ -213,8 +212,8 @@ export class TicketsPage {
     const nodelings = this.game.world.getNodelings().filter(n => n.state !== 'dormant');
 
     const confused      = nodelings.filter(n => n.state === 'confused');
-    const working       = nodelings.filter(n => n.state !== 'confused' && n.graph);
-    const idleNodelings = nodelings.filter(n => n.state === 'idle' && !n.graph);
+    const working       = nodelings.filter(n => n.state !== 'confused' && n.state !== 'idle');
+    const idleNodelings = nodelings.filter(n => n.state === 'idle');
 
     // ── Stats pills (always visible, dimmed at zero) ────────────────────
     this.statsEl.innerHTML = [
@@ -299,8 +298,6 @@ export class TicketsPage {
   // Card HTML
   // ─────────────────────────────────────────────────────────────────────────
   private renderCard(n: Nodeling, kind: 'needs-input' | 'working' | 'idle'): string {
-    const executor   = this.game.executors.get(n.id);
-    const curNode    = executor?.currentNode ?? null;
     const isThinking = this.thinking.has(n.id);
     const errorMsg   = this.errors.get(n.id) ?? null;
 
@@ -311,17 +308,7 @@ export class TicketsPage {
     const dotColor = stateColors[n.state] ?? '#64748b';
     const initials = n.name.substring(0, 2).toUpperCase();
 
-    // Steps breadcrumb
-    let stepsHtml = '';
-    if (n.graph && n.graph.nodes.length > 0) {
-      const inner = n.graph.nodes.map(node => {
-        const active = curNode?.id === node.id;
-        const color  = NODE_COLORS[node.type] ?? '#888';
-        const icon   = NODE_ICONS[node.type]  ?? '';
-        return `<span class="tp-step${active ? ' tp-step-active' : ''}" ${active ? `style="--c:${color}"` : ''}>${icon} ${node.label}</span>`;
-      }).join('<span class="tp-step-sep">›</span>');
-      stepsHtml = `<div class="tp-steps">${inner}</div>`;
-    }
+    const stepsHtml = '';
 
     // Ticket thread — show last ticket (active or completed)
     const ticket: Ticket | undefined = this.game.getTicketStore().getLast(n.id);
@@ -341,7 +328,7 @@ export class TicketsPage {
     const statusLabel =
       kind === 'needs-input' ? '⚠ Waiting for your input' :
       kind === 'idle'        ? '○ Ready for a task' :
-      (curNode ? `↳ ${curNode.label ?? curNode.type}` : '↳ Processing…');
+      '↳ Working…';
 
     const showInput = kind === 'needs-input' || kind === 'idle';
     const inputHtml = showInput ? `

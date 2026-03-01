@@ -2,58 +2,43 @@ import { Entity } from './Entity';
 import type { Item, ItemType } from './Item';
 
 export type BuildingType =
-  // Existing
-  | 'gpu_core' | 'llm_node' | 'webhook' | 'image_gen' | 'deploy_node'
-  // Triggers
-  | 'schedule' | 'email_trigger'
-  // Core Logic
-  | 'if_node' | 'switch_node' | 'merge_node' | 'wait_node'
-  // Data Tools
-  | 'http_request' | 'set_node' | 'code_node'
-  // App Integrations
-  | 'gmail' | 'slack' | 'google_sheets' | 'notion' | 'airtable'
-  // Community
-  | 'whatsapp' | 'scraper'
-  // AI
-  | 'ai_agent' | 'llm_chain';
+  // Coworking furniture
+  | 'desk'           // Personal workstation — Nodelings sit and do focused work
+  | 'meeting_room'   // Group collaboration space
+  | 'whiteboard'     // Brainstorming & planning
+  | 'task_wall'      // Kanban board — connects to Notion/GitHub for tickets
+  | 'break_room'     // Social / recharge area
+  | 'server_rack'    // Compute backbone — heavy processing
+  | 'library'        // Research & reference — look up information
+  | 'coffee_machine'; // Quick energy boost
 
-/** Building types that accept prompts and produce completions */
+/** All buildings can process tasks via LLM — each has a different "vibe" */
 const PROCESSOR_TYPES: BuildingType[] = [
-  'llm_node', 'ai_agent', 'llm_chain', 'image_gen', 'gpu_core', 'code_node',
-  // Integration buildings — process prompts via MCP
-  'notion', 'slack', 'gmail', 'google_sheets', 'airtable', 'whatsapp', 'scraper',
-  // HTTP request — makes real HTTP calls
-  'http_request',
+  'desk', 'meeting_room', 'whiteboard', 'task_wall',
+  'server_rack', 'library',
 ];
 
-/** Building types that act as output sinks (accept completions) */
+/** Buildings that act as output/display (show results) */
 const OUTPUT_TYPES: BuildingType[] = [
-  'deploy_node',
+  'task_wall',
 ];
 
-/** Processing time (ticks) per building type — visual minimum; real time depends on async */
+/** Processing time (ticks) per building type */
 const PROCESS_TIMES: Partial<Record<BuildingType, number>> = {
-  llm_node:     150,  // 5 sec
-  ai_agent:     120,  // 4 sec
-  llm_chain:     90,  // 3 sec
-  image_gen:    120,  // 4 sec
-  gpu_core:      90,  // 3 sec
-  code_node:     60,  // 2 sec
-  notion:        90,  // 3 sec
-  slack:         60,  // 2 sec
-  gmail:         60,  // 2 sec
-  google_sheets: 60,  // 2 sec
-  airtable:      60,  // 2 sec
-  whatsapp:      60,  // 2 sec
-  scraper:       90,  // 3 sec
-  http_request:  60,  // 2 sec
+  desk:           90,   // 3 sec — focused work
+  meeting_room:   120,  // 4 sec — collaboration takes time
+  whiteboard:     60,   // 2 sec — quick brainstorm
+  task_wall:      90,   // 3 sec — organizing tasks
+  server_rack:    150,  // 5 sec — heavy compute
+  library:        90,   // 3 sec — research
+  break_room:     45,   // 1.5 sec — quick break
+  coffee_machine: 30,   // 1 sec — grab a coffee
 };
 
 export class Building extends Entity {
   buildingType: BuildingType;
   /** Overrides the canvas icon; defaults to buildingType when unset */
   iconKey?: string;
-  powered = false;
   /** Items stored in this building */
   inventory: Item[] = [];
   /** Processing state */
@@ -63,9 +48,7 @@ export class Building extends Entity {
   processTime = 150;
   /** Set to true when processing finishes, consumed by Game */
   justFinished = false;
-  /** Count of completions collected (for output buildings) */
-  completionsCollected = 0;
-  /** The prompt text currently being processed */
+  /** The task text currently being processed */
   processingPayload = '';
   /** The result text from backend/LLM processing */
   resultPayload = '';
@@ -82,26 +65,22 @@ export class Building extends Entity {
     this.updateWorldPosition();
   }
 
-  /** Whether this building processes prompts into completions */
+  /** Whether this building processes tasks */
   isProcessor(): boolean {
     return PROCESSOR_TYPES.includes(this.buildingType);
   }
 
-  /** Whether this building acts as an output sink */
+  /** Whether this building acts as an output display */
   isOutput(): boolean {
     return OUTPUT_TYPES.includes(this.buildingType);
   }
 
   canAcceptItem(itemType: ItemType): boolean {
-    // Processing buildings accept prompts (or chained completions) when not busy
     if (this.isProcessor()) {
-      return (itemType === 'prompt' || itemType === 'completion') && !this.processing;
+      return (itemType === 'task' || itemType === 'result') && !this.processing;
     }
-    // Input buildings accept prompts
-    if (this.buildingType === 'webhook' || this.buildingType === 'schedule') return true;
-    // Output buildings accept completions
     if (this.isOutput()) {
-      return itemType === 'completion';
+      return itemType === 'result';
     }
     return false;
   }
@@ -110,16 +89,10 @@ export class Building extends Entity {
     if (!this.canAcceptItem(item.itemType)) return false;
     this.inventory.push(item);
 
-    // Start processing for processor buildings (prompts or chained completions)
-    if (this.isProcessor() && (item.itemType === 'prompt' || item.itemType === 'completion')) {
+    if (this.isProcessor() && (item.itemType === 'task' || item.itemType === 'result')) {
       this.processing = true;
       this.processTimer = 0;
       this.processingPayload = item.payload;
-    }
-
-    // Track completions collected by output buildings
-    if (this.isOutput() && item.itemType === 'completion') {
-      this.completionsCollected++;
     }
 
     return true;
@@ -142,13 +115,11 @@ export class Building extends Entity {
     if (this.processing && this.isProcessor()) {
       this.processTimer++;
 
-      // If async completed, finish as soon as a small minimum visual delay passes
       if (!this.awaitingAsync && this.processTimer >= 10) {
         this.finishProcessing();
         return;
       }
 
-      // If timer reached max while still waiting for async, hold at ~95%
       if (this.processTimer >= this.processTime) {
         if (this.awaitingAsync) {
           this.processTimer = Math.floor(this.processTime * 0.95);
@@ -159,7 +130,6 @@ export class Building extends Entity {
     }
   }
 
-  /** Called by Game when async processing completes */
   completeAsync(resultPayload: string, metadata?: Record<string, any>) {
     this.resultPayload = resultPayload;
     this.resultMetadata = metadata ?? {};
@@ -167,10 +137,10 @@ export class Building extends Entity {
   }
 
   private finishProcessing() {
-    const promptIdx = this.inventory.findIndex(i => i.itemType === 'prompt');
-    if (promptIdx >= 0) {
-      const prompt = this.inventory.splice(promptIdx, 1)[0];
-      prompt.removed = true;
+    const taskIdx = this.inventory.findIndex(i => i.itemType === 'task');
+    if (taskIdx >= 0) {
+      const task = this.inventory.splice(taskIdx, 1)[0];
+      task.removed = true;
     }
     this.processing = false;
     this.processTimer = 0;

@@ -217,26 +217,7 @@ export class Renderer {
     const platY = screen.y - platSize / 2;
 
     // Accent color per building type
-    const accentColors: Record<string, string> = {
-      gpu_core: '#10b981', llm_node: '#8b5cf6', webhook: '#3b82f6',
-      image_gen: '#ec4899', deploy_node: '#f59e0b',
-      schedule: '#6366f1', email_trigger: '#0ea5e9',
-      if_node: '#f59e0b', switch_node: '#d97706', merge_node: '#a78bfa', wait_node: '#94a3b8',
-      http_request: '#10b981', set_node: '#14b8a6', code_node: '#6366f1',
-      gmail: '#ef4444', slack: '#7c3aed', google_sheets: '#22c55e', notion: '#e2e8f0', airtable: '#2563eb',
-      whatsapp: '#22c55e', scraper: '#a855f7',
-      ai_agent: '#ec4899', llm_chain: '#8b5cf6',
-    };
-    const accent = accentColors[building.buildingType] || '#6b7280';
-
-    // GPU Core unpowered pulsing glow
-    if (building.buildingType === 'gpu_core' && !building.powered) {
-      const pulse = 0.2 + Math.sin(time * 0.06) * 0.12;
-      this.ctx.fillStyle = `rgba(16,185,129,${pulse})`;
-      this.ctx.beginPath();
-      this.ctx.arc(screen.x, screen.y, ts * 0.55, 0, Math.PI * 2);
-      this.ctx.fill();
-    }
+    const accent = this.getBuildingAccent(building.buildingType);
 
     // Drop shadow
     this.ctx.fillStyle = `rgba(0,0,0,${0.4 * lightMul})`;
@@ -314,29 +295,6 @@ export class Renderer {
       this.ctx.font = `bold ${7 * z}px monospace`;
       this.ctx.textAlign = 'center';
       this.ctx.fillText(`${building.inventory.length}`, badgeX, badgeY + 2.5 * z);
-    }
-
-    // Output building completion count badge (green)
-    if (building.isOutput() && building.completionsCollected > 0) {
-      const badgeR = 7 * z;
-      const badgeX = platX + platSize - 4 * z;
-      const badgeY = platY + 4 * z;
-      this.ctx.fillStyle = `rgba(16,185,129,${0.9 * lightMul})`;
-      this.ctx.beginPath();
-      this.ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.fillStyle = `rgba(255,255,255,${0.95 * lightMul})`;
-      this.ctx.font = `bold ${7 * z}px monospace`;
-      this.ctx.textAlign = 'center';
-      this.ctx.fillText(`${building.completionsCollected}`, badgeX, badgeY + 2.5 * z);
-    }
-
-    // GPU Core "Click to boot" hint
-    if (building.buildingType === 'gpu_core' && !building.powered) {
-      this.ctx.fillStyle = `rgba(16,185,129,${0.7 + Math.sin(time * 0.08) * 0.3})`;
-      this.ctx.font = `bold ${8 * z}px monospace`;
-      this.ctx.textAlign = 'center';
-      this.ctx.fillText('Click to boot', screen.x, platY + platSize + 12 * z);
     }
 
   }
@@ -559,7 +517,7 @@ export class Renderer {
 
   private drawCarriedItem(x: number, y: number, item: Item, z: number, lightMul: number) {
     const s = 8 * z;
-    const color = item.itemType === 'prompt' ? '#3b82f6' : '#10b981';
+    const color = item.itemType === 'task' ? '#3b82f6' : '#10b981';
     this.ctx.fillStyle = color;
     this.ctx.globalAlpha = 0.85 * lightMul;
     this.roundRect(x - s / 2, y - s / 2, s, s, 2 * z);
@@ -573,7 +531,7 @@ export class Renderer {
     const screen = cam.gridToScreen(item.gridX, item.gridY);
     const lightMul = 0.3 + this.lightLevel * 0.7;
     const s = 7 * z;
-    const color = item.itemType === 'prompt' ? '#3b82f6' : '#10b981';
+    const color = item.itemType === 'task' ? '#3b82f6' : '#10b981';
     this.ctx.fillStyle = color;
     this.ctx.globalAlpha = 0.8 * lightMul;
     this.roundRect(screen.x - s / 2, screen.y - s / 2, s, s, 2 * z);
@@ -597,17 +555,7 @@ export class Renderer {
     const platX = screen.x - platSize / 2;
     const platY = screen.y - platSize / 2;
 
-    const accentColors: Record<string, string> = {
-      gpu_core: '#10b981', llm_node: '#8b5cf6', webhook: '#3b82f6',
-      image_gen: '#ec4899', deploy_node: '#f59e0b',
-      schedule: '#6366f1', email_trigger: '#0ea5e9',
-      if_node: '#f59e0b', switch_node: '#d97706', merge_node: '#a78bfa', wait_node: '#94a3b8',
-      http_request: '#10b981', set_node: '#14b8a6', code_node: '#6366f1',
-      gmail: '#ef4444', slack: '#7c3aed', google_sheets: '#22c55e', notion: '#e2e8f0', airtable: '#2563eb',
-      whatsapp: '#22c55e', scraper: '#a855f7',
-      ai_agent: '#ec4899', llm_chain: '#8b5cf6',
-    };
-    const accent = accentColors[type] || '#6b7280';
+    const accent = this.getBuildingAccent(type);
 
     // Pulsing ghost alpha
     const ghostAlpha = 0.35 + Math.sin(time * 0.08) * 0.1;
@@ -639,14 +587,14 @@ export class Renderer {
   /** Returns the accent color for a building type */
   private getBuildingAccent(type: string): string {
     const map: Record<string, string> = {
-      gpu_core: '#10b981', llm_node: '#8b5cf6', webhook: '#3b82f6',
-      image_gen: '#ec4899', deploy_node: '#f59e0b',
-      schedule: '#6366f1', email_trigger: '#0ea5e9',
-      if_node: '#f59e0b', switch_node: '#d97706', merge_node: '#a78bfa', wait_node: '#94a3b8',
-      http_request: '#10b981', set_node: '#14b8a6', code_node: '#6366f1',
-      gmail: '#ef4444', slack: '#7c3aed', google_sheets: '#22c55e', notion: '#e2e8f0',
-      airtable: '#2563eb', whatsapp: '#22c55e', scraper: '#a855f7',
-      ai_agent: '#ec4899', llm_chain: '#8b5cf6',
+      desk:           '#4ecdc4',
+      meeting_room:   '#8b5cf6',
+      whiteboard:     '#f59e0b',
+      task_wall:      '#3b82f6',
+      break_room:     '#ec4899',
+      server_rack:    '#10b981',
+      library:        '#6366f1',
+      coffee_machine: '#d97706',
     };
     return map[type] ?? '#6b7280';
   }
