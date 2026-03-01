@@ -119,7 +119,7 @@ export class Game {
     this.ticketsPage  = new TicketsPage(overlay, this);
     this.nodeInfoPanel = new NodeInfoPanel(overlay);
     this.nodeInfoPanel.onAddPrompt = (building, payload) => this.addPromptToBuilding(building, payload);
-    this.nodeInfoPanel.onOpenMCP = () => this.settingsPanel.showTab('integrations');
+    this.nodeInfoPanel.onOpenMCP = () => { this.settingsPanel.show(); this.settingsPanel.scrollToIntegrations(); };
 
     // Handle resize
     window.addEventListener('resize', () => this.resize());

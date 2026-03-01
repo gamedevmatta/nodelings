@@ -92,15 +92,51 @@ const CATEGORY_ORDER = [
   'Business',
 ];
 
-const CATEGORY_ICONS: Record<string, string> = {
-  'Productivity & PM': '🗂️',
-  'Communication':     '💬',
-  'Dev Tools':         '🛠️',
-  'Data & Databases':  '🗄️',
-  'Browser':           '🌐',
-  'Cloud Storage':     '☁️',
-  'AI & Reasoning':    '🧠',
-  'Business':          '💼',
+// Simple Icons CDN slugs — null means use monogram fallback
+const LOGOS: Record<string, string | null> = {
+  'notion':        'notion',
+  'github':        'github',
+  'gitlab':        'gitlab',
+  'jira':          'jira',
+  'linear':        'linear',
+  'asana':         'asana',
+  'trello':        'trello',
+  'google-sheets': 'googlesheets',
+  'airtable':      'airtable',
+  'slack':         'slack',
+  'gmail':         'gmail',
+  'discord':       'discord',
+  'telegram':      'telegram',
+  'twilio':        'twilio',
+  'teams':         'microsoftteams',
+  'filesystem':    null,
+  'git':           'git',
+  'fetch':         null,
+  'docker':        'docker',
+  'kubernetes':    'kubernetes',
+  'vercel':        'vercel',
+  'railway':       'railway',
+  'postgres':      'postgresql',
+  'sqlite':        'sqlite',
+  'mysql':         'mysql',
+  'mongodb':       'mongodb',
+  'supabase':      'supabase',
+  'snowflake':     'snowflake',
+  'brave-search':  'brave',
+  'exa':           null,
+  'puppeteer':     'puppeteer',
+  'playwright':    'playwright',
+  'gdrive':        'googledrive',
+  'aws-s3':        'amazons3',
+  'dropbox':       'dropbox',
+  'sequential':    null,
+  'perplexity':    'perplexity',
+  'memory':        null,
+  'stripe':        'stripe',
+  'hubspot':       'hubspot',
+  'shopify':       'shopify',
+  'zapier':        'zapier',
+  'npm':           'npm',
 };
 
 export class SettingsPanel {
@@ -108,7 +144,6 @@ export class SettingsPanel {
   private element: HTMLElement;
   private llm: LLMBridge;
   private visible = false;
-  private activeTab: 'keys' | 'integrations' = 'keys';
 
   // MCP state
   private servers: MCPServerInfo[] = [];
@@ -138,7 +173,7 @@ export class SettingsPanel {
   show() {
     this.visible = true;
     this.element.style.display = 'flex';
-    this.refreshCurrentTab();
+    this.refreshAll();
   }
 
   hide() {
@@ -146,63 +181,36 @@ export class SettingsPanel {
     this.element.style.display = 'none';
   }
 
-  showTab(tab: 'keys' | 'integrations') {
-    this.activeTab = tab;
-    if (!this.visible) {
-      this.visible = true;
-      this.element.style.display = 'flex';
-    }
-    this.updateTabUI();
-    this.refreshCurrentTab();
-  }
-
-  private refreshCurrentTab() {
-    if (this.activeTab === 'keys') {
-      this.checkBackendStatus();
-      this.loadKeyStatus();
-    } else {
-      this.refreshMCP();
+  scrollToIntegrations() {
+    if (!this.visible) this.show();
+    const intSection = this.element.querySelector('#up-integrations-section') as HTMLElement;
+    if (intSection) {
+      intSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
 
-  private updateTabUI() {
-    this.element.querySelectorAll('.up-tab').forEach(tab => {
-      (tab as HTMLElement).classList.toggle('up-tab-active', (tab as HTMLElement).dataset.tab === this.activeTab);
-    });
-    const keysContent = this.element.querySelector('.up-content-keys') as HTMLElement;
-    const intContent  = this.element.querySelector('.up-content-integrations') as HTMLElement;
-    keysContent.style.display = this.activeTab === 'keys' ? 'flex' : 'none';
-    intContent.style.display  = this.activeTab === 'integrations' ? 'flex' : 'none';
+  private refreshAll() {
+    this.loadKeyStatus();
+    this.refreshMCP();
   }
 
   private buildHTML() {
     const isProd = (import.meta as any).env?.PROD === true;
     const devBanner = isProd
-      ? `<div class="up-dev-notice">⚠ MCP servers run as local processes and are only supported when self-hosting. In production, use built-in integrations instead.</div>`
+      ? `<div class="up-dev-notice">MCP servers require local server — use built-in integrations in production.</div>`
       : '';
 
     this.element.innerHTML = `
       <div class="up-header">
-        <div class="up-header-left">
-          <span class="up-title">Settings</span>
-          <div class="up-tab-bar">
-            <button class="up-tab up-tab-active" data-tab="keys">Keys &amp; Status</button>
-            <button class="up-tab" data-tab="integrations">Integrations</button>
-          </div>
-        </div>
+        <span class="up-title">Settings</span>
         <button class="up-close">✕</button>
       </div>
       <div class="up-header-rule"></div>
 
-      <!-- Keys & Status tab -->
-      <div class="up-content-keys up-tab-content">
+      <div class="up-body">
+        <!-- API Keys section -->
         <div class="up-section">
-          <label class="up-label">⚡ Backend Status</label>
-          <div class="up-status-box">Checking…</div>
-        </div>
-        <div class="up-divider"></div>
-        <div class="up-section">
-          <label class="up-label">🔑 Your API Keys</label>
+          <label class="up-label">API Keys</label>
           <div class="up-key-note">Keys are AES-256 encrypted server-side. Never exposed to the browser.</div>
           <div class="up-key-row">
             <span class="up-key-label">Anthropic</span>
@@ -225,45 +233,40 @@ export class SettingsPanel {
           </div>
           <div class="up-key-status"></div>
         </div>
-      </div>
 
-      <!-- Integrations tab -->
-      <div class="up-content-integrations up-tab-content" style="display:none">
-        ${devBanner}
+        <!-- Connected servers (above section divider) -->
         <div class="up-connected-section">
-          <div class="up-section-label">Connected Servers</div>
+          <div class="up-section-label">Connected</div>
           <div class="up-server-list"></div>
         </div>
-        <div class="up-divider"></div>
-        <div class="up-catalog-wrap">
-          <div class="up-section-label">Browse &amp; Add</div>
-          <div class="up-catalog"></div>
-        </div>
-        <div class="up-divider"></div>
-        <div class="up-custom-section">
-          <button class="up-custom-toggle">＋ Add custom server</button>
-          <div class="up-add-form">
-            <input class="up-input" placeholder="Server name" data-field="name" />
-            <input class="up-input" placeholder="Command (e.g. npx)" data-field="command" />
-            <input class="up-input" placeholder="Args (space-separated)" data-field="args" />
-            <input class="up-input" placeholder="Env vars (KEY=val KEY2=val2)" data-field="env" />
-            <button class="up-connect-btn">Connect</button>
+
+        <!-- Section divider -->
+        <div class="up-section-divider"></div>
+
+        <!-- Integrations / catalog section -->
+        <div id="up-integrations-section">
+          ${devBanner}
+          <div class="up-catalog-wrap">
+            <div class="up-section-label">Browse &amp; Add</div>
+            <div class="up-catalog"></div>
           </div>
-          <div class="up-add-status"></div>
+          <div class="up-divider"></div>
+          <div class="up-custom-section">
+            <button class="up-custom-toggle">＋ Add custom server</button>
+            <div class="up-add-form">
+              <input class="up-input" placeholder="Server name" data-field="name" />
+              <input class="up-input" placeholder="Command (e.g. npx)" data-field="command" />
+              <input class="up-input" placeholder="Args (space-separated)" data-field="args" />
+              <input class="up-input" placeholder="Env vars (KEY=val KEY2=val2)" data-field="env" />
+              <button class="up-connect-btn">Connect</button>
+            </div>
+            <div class="up-add-status"></div>
+          </div>
         </div>
       </div>
     `;
 
     this.statusEl = this.element.querySelector('.up-add-status')!;
-
-    // Tab switching
-    this.element.querySelectorAll('.up-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.activeTab = (btn as HTMLElement).dataset.tab as 'keys' | 'integrations';
-        this.updateTabUI();
-        this.refreshCurrentTab();
-      });
-    });
 
     // Close
     this.element.querySelector('.up-close')!.addEventListener('click', () => this.hide());
@@ -297,31 +300,6 @@ export class SettingsPanel {
   }
 
   // ── Keys & Status tab ─────────────────────────────────────────────────────
-
-  private async checkBackendStatus() {
-    const statusEl = this.element.querySelector('.up-status-box') as HTMLElement;
-    try {
-      const res = await apiFetch('/api/health', { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) {
-        statusEl.textContent = 'Server unreachable';
-        statusEl.style.color = '#f87171';
-        return;
-      }
-      const data = await res.json() as any;
-      const backend = data.activeBackend;
-      const source = data.hasSessionAnthropicKey || data.hasSessionGeminiKey ? 'your key' : 'server key';
-      if (backend) {
-        statusEl.textContent = `Connected — ${backend === 'gemini' ? 'Gemini' : 'Anthropic'} (${source}, ${data.mcpTools} MCP tools)`;
-        statusEl.style.color = '#4ecdc4';
-      } else {
-        statusEl.textContent = 'No AI key — add yours below or configure server .env';
-        statusEl.style.color = '#fbbf24';
-      }
-    } catch {
-      statusEl.textContent = 'Server offline — using fallback mode';
-      statusEl.style.color = '#f87171';
-    }
-  }
 
   private async loadKeyStatus() {
     try {
@@ -395,7 +373,6 @@ export class SettingsPanel {
         statusEl.style.color = '#4ecdc4';
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
         await this.loadKeyStatus();
-        await this.checkBackendStatus();
       } else {
         statusEl.textContent = 'Failed to save keys.';
         statusEl.style.color = '#f87171';
@@ -420,7 +397,6 @@ export class SettingsPanel {
         statusEl.style.color = '#fbbf24';
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
         await this.loadKeyStatus();
-        await this.checkBackendStatus();
       } else {
         statusEl.textContent = 'Failed to clear keys.';
         statusEl.style.color = '#f87171';
@@ -431,7 +407,7 @@ export class SettingsPanel {
     }
   }
 
-  // ── Integrations tab ──────────────────────────────────────────────────────
+  // ── Integrations section ──────────────────────────────────────────────────
 
   async refreshMCP() {
     try {
@@ -454,27 +430,38 @@ export class SettingsPanel {
     if (!listEl) return;
 
     if (this.servers.length === 0) {
-      listEl.innerHTML = `<div class="up-empty">No servers connected. Browse integrations below.</div>`;
+      listEl.innerHTML = `<div class="up-empty">No servers connected yet.</div>`;
       return;
     }
 
     listEl.innerHTML = this.servers.map(s => {
       const expanded = this.expandedServers.has(s.name);
-      const dotColor = s.connected ? '#4ade80' : '#f87171';
+
+      const slug = LOGOS[s.name] ?? null;
+      const iconHtml = slug
+        ? `<img src="https://cdn.simpleicons.org/${slug}/ffffff" class="up-card-logo" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" /><span class="up-card-monogram" style="display:none">${s.name[0].toUpperCase()}</span>`
+        : `<span class="up-card-monogram">${s.name[0].toUpperCase()}</span>`;
+
       const toolList = expanded && s.tools.length > 0
         ? `<div class="up-tool-list">${s.tools.map(t =>
             `<div class="up-tool-item" title="${this.esc(t.description)}">${this.esc(t.name)}</div>`
           ).join('')}</div>`
         : '';
 
+      const toggleClass = s.connected ? ' up-card-added' : '';
+      const toggleAction = s.connected ? 'disconnect' : 'reconnect';
+      const toggleLabel = s.connected ? 'Disconnect' : 'Reconnect';
+
       return `
-        <div class="up-server-card" data-server="${this.esc(s.name)}">
-          <div class="up-server-row">
-            <span class="up-dot" style="background:${dotColor}"></span>
-            <span class="up-server-name">${this.esc(s.name)}</span>
-            <span class="up-server-badge">${s.toolCount} tool${s.toolCount !== 1 ? 's' : ''}</span>
-            <button class="up-srv-toggle" data-action="${s.connected ? 'disconnect' : 'reconnect'}" data-name="${this.esc(s.name)}">
-              ${s.connected ? 'Disconnect' : 'Reconnect'}
+        <div class="up-card up-card-connected up-card-list" data-server="${this.esc(s.name)}">
+          <div class="up-card-main">
+            <div class="up-card-icon">${iconHtml}</div>
+            <div class="up-card-body">
+              <div class="up-card-name">${this.esc(s.name)}</div>
+              <div class="up-card-desc">${s.toolCount} tool${s.toolCount !== 1 ? 's' : ''}</div>
+            </div>
+            <button class="up-srv-toggle up-card-btn${toggleClass}" data-action="${toggleAction}" data-name="${this.esc(s.name)}">
+              ${toggleLabel}
             </button>
             <button class="up-srv-remove" data-name="${this.esc(s.name)}">✕</button>
           </div>
@@ -482,10 +469,10 @@ export class SettingsPanel {
         </div>`;
     }).join('');
 
-    listEl.querySelectorAll('.up-server-card').forEach(card => {
+    listEl.querySelectorAll('.up-card-list').forEach(card => {
       const name = (card as HTMLElement).dataset.server!;
 
-      card.querySelector('.up-server-row')!.addEventListener('click', (e) => {
+      card.querySelector('.up-card-main')!.addEventListener('click', (e) => {
         const target = e.target as HTMLElement;
         if (target.closest('button')) return;
         if (this.expandedServers.has(name)) this.expandedServers.delete(name);
@@ -537,10 +524,8 @@ export class SettingsPanel {
       const entries = CATALOG.filter(e => e.category === cat);
       if (entries.length === 0) continue;
 
-      const catIcon = CATEGORY_ICONS[cat] ?? '🔌';
       html += `
         <div class="up-cat-header">
-          <span class="up-cat-icon">${catIcon}</span>
           <span class="up-cat-name">${this.esc(cat)}</span>
           <span class="up-cat-count">${entries.length}</span>
         </div>
@@ -552,9 +537,14 @@ export class SettingsPanel {
           `<span class="up-env-chip">${this.esc(h)}</span>`
         ).join('');
 
+        const slug = LOGOS[e.id] ?? null;
+        const iconHtml = slug
+          ? `<img src="https://cdn.simpleicons.org/${slug}/ffffff" class="up-card-logo" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" /><span class="up-card-monogram" style="display:none">${e.name[0]}</span>`
+          : `<span class="up-card-monogram">${e.name[0]}</span>`;
+
         html += `
           <div class="up-card${added ? ' up-card-connected' : ''}">
-            <span class="up-card-icon">${e.icon}</span>
+            <div class="up-card-icon">${iconHtml}</div>
             <div class="up-card-body">
               <div class="up-card-name">${this.esc(e.name)}</div>
               <div class="up-card-desc">${this.esc(e.desc)}</div>
@@ -711,14 +701,9 @@ export class SettingsPanel {
       .up-header {
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
+        align-items: center;
         padding: 22px 28px 0;
         flex-shrink: 0;
-      }
-      .up-header-left {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
       }
       .up-title {
         font-size: 15px;
@@ -733,40 +718,10 @@ export class SettingsPanel {
         cursor: pointer;
         font-size: 15px;
         padding: 2px 4px;
-        margin-top: 2px;
         transition: color 0.12s;
         line-height: 1;
       }
       .up-close:hover { color: #94a3b8; }
-
-      /* ── Tab bar ─────────────────────────────────────────────────────── */
-      .up-tab-bar {
-        display: flex;
-        gap: 2px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 10px;
-        padding: 3px;
-      }
-      .up-tab {
-        background: none;
-        border: none;
-        border-radius: 7px;
-        padding: 6px 16px;
-        font-family: inherit;
-        font-size: 12px;
-        font-weight: 600;
-        color: #3d5068;
-        cursor: pointer;
-        transition: background 0.15s, color 0.15s;
-        white-space: nowrap;
-      }
-      .up-tab:hover { color: #64748b; }
-      .up-tab.up-tab-active {
-        background: rgba(78,205,196,0.14);
-        color: #4ecdc4;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-      }
 
       /* ── Header rule ─────────────────────────────────────────────────── */
       .up-header-rule {
@@ -776,8 +731,8 @@ export class SettingsPanel {
         flex-shrink: 0;
       }
 
-      /* ── Tab content areas ───────────────────────────────────────────── */
-      .up-tab-content {
+      /* ── Scrollable body ─────────────────────────────────────────────── */
+      .up-body {
         flex: 1;
         min-height: 0;
         overflow-y: auto;
@@ -788,9 +743,19 @@ export class SettingsPanel {
         scrollbar-width: thin;
         scrollbar-color: rgba(78,205,196,0.15) transparent;
       }
-      .up-tab-content::-webkit-scrollbar { width: 4px; }
-      .up-tab-content::-webkit-scrollbar-track { background: transparent; }
-      .up-tab-content::-webkit-scrollbar-thumb { background: rgba(78,205,196,0.15); border-radius: 2px; }
+      .up-body::-webkit-scrollbar { width: 4px; }
+      .up-body::-webkit-scrollbar-track { background: transparent; }
+      .up-body::-webkit-scrollbar-thumb { background: rgba(78,205,196,0.15); border-radius: 2px; }
+
+      /* ── Section divider ─────────────────────────────────────────────── */
+      .up-section-divider {
+        height: 2px;
+        background: linear-gradient(90deg, rgba(78,205,196,0.22) 0%, rgba(78,205,196,0.06) 50%, transparent 100%);
+        border: none;
+        border-radius: 1px;
+        flex-shrink: 0;
+        margin: 4px 0;
+      }
 
       /* ── Shared section pieces ───────────────────────────────────────── */
       .up-section {
@@ -817,18 +782,6 @@ export class SettingsPanel {
         height: 1px;
         background: rgba(255,255,255,0.05);
         flex-shrink: 0;
-      }
-
-      /* ── Status box ──────────────────────────────────────────────────── */
-      .up-status-box {
-        font-size: 12px;
-        font-family: 'JetBrains Mono', monospace;
-        color: #94a3b8;
-        padding: 10px 14px;
-        background: rgba(15,23,42,0.7);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 10px;
-        line-height: 1.4;
       }
 
       /* ── Key rows ────────────────────────────────────────────────────── */
@@ -945,46 +898,20 @@ export class SettingsPanel {
         font-style: italic;
         padding: 2px 0;
       }
-      .up-server-card {
-        background: rgba(255,255,255,0.02);
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 10px;
-        overflow: hidden;
-        transition: border-color 0.12s;
-      }
-      .up-server-card:hover { border-color: rgba(255,255,255,0.1); }
-      .up-server-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 14px;
+      /* connected server cards — full-width, column layout */
+      .up-card-list {
+        flex-direction: column !important;
+        padding: 0 !important;
+        gap: 0 !important;
         cursor: pointer;
       }
-      .up-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        flex-shrink: 0;
-      }
-      .up-server-name {
-        font-size: 13px;
-        font-weight: 600;
-        color: #cbd5e1;
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .up-server-badge {
-        font-size: 10px;
-        color: #4a5e74;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 4px;
-        padding: 2px 7px;
-        flex-shrink: 0;
-        font-weight: 600;
+      .up-card-main {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 10px 12px;
+        width: 100%;
+        box-sizing: border-box;
       }
       .up-srv-toggle, .up-srv-remove {
         font-family: inherit;
@@ -1044,7 +971,6 @@ export class SettingsPanel {
         gap: 7px;
         margin-bottom: 6px;
       }
-      .up-cat-icon { font-size: 13px; line-height: 1; }
       .up-cat-name {
         font-size: 11px;
         font-weight: 700;
@@ -1089,12 +1015,33 @@ export class SettingsPanel {
         border-left-color: rgba(74,222,128,0.4) !important;
       }
       .up-card-icon {
-        font-size: 17px;
         flex-shrink: 0;
         width: 22px;
-        text-align: center;
-        line-height: 1;
+        height: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         margin-top: 1px;
+      }
+      .up-card-logo {
+        width: 16px;
+        height: 16px;
+        object-fit: contain;
+        display: block;
+        opacity: 0.75;
+      }
+      .up-card-monogram {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        color: #94a3b8;
+        flex-shrink: 0;
       }
       .up-card-body {
         flex: 1;
