@@ -7,12 +7,8 @@ export class World {
   entities: Entity[] = [];
   gridWidth = 12;
   gridHeight = 12;
-  /** Is the workspace powered (GPU Core booted)? */
-  powered = false;
-  /** Tutorial state tracking */
-  gpuBooted = false;
-  /** Callback for when a completion is produced */
-  onCompletionProduced: (() => void) | null = null;
+  /** Callback for when a result is produced */
+  onResultProduced: (() => void) | null = null;
 
   /** Quick lookup maps */
   private buildingMap = new Map<string, Building>();
@@ -180,7 +176,7 @@ export class World {
       if (entity instanceof Nodeling) entity.tick();
     }
 
-    // Clean up removed entities (e.g., smelted ore)
+    // Clean up removed entities
     for (let i = this.entities.length - 1; i >= 0; i--) {
       if (this.entities[i].removed) {
         this.entities.splice(i, 1);

@@ -39,7 +39,6 @@ export class Building extends Entity {
   buildingType: BuildingType;
   /** Overrides the canvas icon; defaults to buildingType when unset */
   iconKey?: string;
-  powered = false;
   /** Items stored in this building */
   inventory: Item[] = [];
   /** Processing state */
@@ -49,7 +48,7 @@ export class Building extends Entity {
   processTime = 150;
   /** Set to true when processing finishes, consumed by Game */
   justFinished = false;
-  /** The prompt text currently being processed */
+  /** The task text currently being processed */
   processingPayload = '';
   /** The result text from backend/LLM processing */
   resultPayload = '';

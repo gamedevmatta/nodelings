@@ -148,8 +148,8 @@ export class NodeInfoPanel {
   /** Save indicator timeout */
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  /** Callback: fired when user clicks "Add Prompt" on a webhook */
-  onAddPrompt: ((building: Building, payload: string) => void) | null = null;
+  /** Callback: fired when user adds a task to a building */
+  onAddTask: ((building: Building, payload: string) => void) | null = null;
   /** Callback: fired when user clicks "Connect MCP" on an integration building */
   onOpenMCP: (() => void) | null = null;
 
@@ -358,8 +358,8 @@ export class NodeInfoPanel {
         e.stopPropagation();
         if (e.key === 'Enter') {
           const text = promptInput.value.trim();
-          if (text && this.building && this.onAddPrompt) {
-            this.onAddPrompt(this.building, text);
+          if (text && this.building && this.onAddTask) {
+            this.onAddTask(this.building, text);
             promptInput.value = '';
             this.renderFull(); // re-render to show updated queue
           }
@@ -384,8 +384,8 @@ export class NodeInfoPanel {
       e.stopPropagation();
       const input = this.element.querySelector('.nip-prompt-text') as HTMLInputElement | null;
       const text = input?.value.trim() || '';
-      if (this.building && this.onAddPrompt) {
-        this.onAddPrompt(this.building, text || 'Hello, process this prompt');
+      if (this.building && this.onAddTask) {
+        this.onAddTask(this.building, text || 'Hello, process this task');
         if (input) input.value = '';
         this.renderFull(); // re-render to show updated queue
       }
@@ -938,90 +938,6 @@ export class NodeInfoPanel {
         background: linear-gradient(90deg, #8b5cf6, #a78bfa);
         border-radius: 3px;
         transition: width 0.3s ease;
-      }
-
-      /* ── Webhook URL ── */
-      .nip-webhook-url-wrap {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        margin-bottom: 4px;
-      }
-      .nip-webhook-url-row {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      .nip-webhook-url {
-        flex: 1;
-        min-width: 0;
-        font-size: 10px;
-        font-family: 'Fira Code', 'Cascadia Code', monospace;
-        color: #60a5fa;
-        background: rgba(59,130,246,0.08);
-        border: 1px solid rgba(59,130,246,0.2);
-        border-radius: 6px;
-        padding: 5px 8px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        user-select: all;
-      }
-      .nip-webhook-copy {
-        width: 28px; height: 28px;
-        border-radius: 6px;
-        border: 1px solid rgba(59,130,246,0.2);
-        background: rgba(59,130,246,0.08);
-        color: #60a5fa;
-        font-size: 14px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        transition: all 0.15s;
-      }
-      .nip-webhook-copy:hover {
-        background: rgba(59,130,246,0.15);
-        border-color: rgba(59,130,246,0.4);
-        color: #93bbfd;
-      }
-      .nip-webhook-hint {
-        font-size: 10px;
-        color: #4a5e74;
-      }
-      .nip-webhook-hint--warn {
-        color: #fbbf24;
-        font-style: italic;
-      }
-
-      /* ── Schedule status ── */
-      .nip-schedule-status {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        border-radius: 8px;
-        background: rgba(99,102,241,0.06);
-        border: 1px solid rgba(99,102,241,0.15);
-      }
-      .nip-schedule-dot {
-        width: 8px; height: 8px;
-        border-radius: 50%;
-        flex-shrink: 0;
-      }
-      .nip-schedule-dot--active {
-        background: #22c55e;
-        box-shadow: 0 0 6px rgba(34,197,94,0.5);
-        animation: nip-pulse 1.5s ease-in-out infinite;
-      }
-      .nip-schedule-dot--paused {
-        background: #64748b;
-      }
-      .nip-schedule-text {
-        font-size: 11px;
-        color: #c8d6e5;
-        font-weight: 500;
       }
 
       /* ── Save indicator ── */

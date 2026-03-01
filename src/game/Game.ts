@@ -82,7 +82,7 @@ export class Game {
     this.settingsPanel = new SettingsPanel(overlay, this.llm);
     this.ticketsPage   = new TicketsPage(overlay, this);
     this.nodeInfoPanel = new NodeInfoPanel(overlay);
-    this.nodeInfoPanel.onAddPrompt = (building, payload) => this.addTaskToBuilding(building, payload);
+    this.nodeInfoPanel.onAddTask = (building, payload) => this.addTaskToBuilding(building, payload);
 
     // Handle resize
     window.addEventListener('resize', () => this.resize());
@@ -332,11 +332,8 @@ export class Game {
     return ctx;
   }
 
-  /** Power up the workspace */
+  /** Fade in the workspace lighting */
   powerOn() {
-    this.world.powered = true;
-    this.world.gpuBooted = true;
-
     let frame = 0;
     const fadeIn = () => {
       frame++;
@@ -501,7 +498,7 @@ export class Game {
     building.resultPayload = '';
     building.resultMetadata = {};
     this.world.addEntity(result);
-    this.world.onCompletionProduced?.();
+    this.world.onResultProduced?.();
   }
 
   /** Send building work to backend */

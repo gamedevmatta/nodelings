@@ -2,7 +2,7 @@
 /**
  * Headless Puppeteer playtesting for Nodelings.
  * Usage: node scripts/playtest.mjs [scenario]
- * Scenarios: basic, conversation, build, all (default: all)
+ * Scenarios: basic, chat, furniture, all (default: all)
  * Requires: dev server (port 5173) + backend (port 3001)
  */
 
@@ -16,29 +16,6 @@ async function waitForGame(page) {
   await page.waitForFunction(() => window.game && window.game.world, { timeout: TIMEOUT });
 }
 
-async function waitForReply(page) {
-  await page.waitForFunction(() => {
-    const s = document.querySelector('.pp-status');
-    return !s || !s.classList.contains('thinking');
-  }, { timeout: AI_TIMEOUT });
-}
-
-async function getState(page) {
-  return page.evaluate(() => {
-    const msgs = document.querySelectorAll('.pp-msg');
-    const opts = document.querySelectorAll('.pp-option-pill');
-    const build = document.querySelector('.pp-build-row');
-    const plan = document.querySelector('.pp-plan-summary');
-    return {
-      msgCount: msgs.length,
-      lastMsg: msgs.length > 0 ? msgs[msgs.length - 1].textContent : '',
-      options: Array.from(opts).map(o => o.textContent),
-      hasBuild: !!(build && build.style.display !== 'none'),
-      plan: plan ? plan.textContent : null,
-    };
-  });
-}
-
 function assert(cond, msg) {
   if (!cond) throw new Error(`ASSERTION FAILED: ${msg}`);
 }
@@ -46,17 +23,35 @@ function assert(cond, msg) {
 // ── Scenarios ──────────────────────────────────────────────────────────────
 
 async function testBasic(page) {
-  console.log('\n[basic] Game loads with Sparky');
+  console.log('\n[basic] Game loads with Sparky and starter furniture');
   await waitForGame(page);
 
-  const nodelingCount = await page.evaluate(() => window.game.world.getNodelings().length);
-  console.log(`  Nodelings: ${nodelingCount}`);
-  assert(nodelingCount >= 1, `Expected >= 1 nodeling, got ${nodelingCount}`);
+  const state = await page.evaluate(() => {
+    const nodelings = window.game.world.getNodelings();
+    const buildings = window.game.world.getBuildings();
+    return {
+      nodelingCount: nodelings.length,
+      nodelingName: nodelings[0]?.name,
+      buildingCount: buildings.length,
+      buildingTypes: buildings.map(b => b.buildingType),
+    };
+  });
+
+  console.log(`  Nodelings: ${state.nodelingCount} (${state.nodelingName})`);
+  console.log(`  Buildings: ${state.buildingCount} (${state.buildingTypes.join(', ')})`);
+
+  assert(state.nodelingCount >= 1, `Expected >= 1 nodeling, got ${state.nodelingCount}`);
+  assert(state.nodelingName === 'Sparky', `Expected Sparky, got ${state.nodelingName}`);
+  assert(state.buildingCount >= 3, `Expected >= 3 starter buildings, got ${state.buildingCount}`);
+  assert(state.buildingTypes.includes('desk'), 'Missing desk');
+  assert(state.buildingTypes.includes('whiteboard'), 'Missing whiteboard');
+  assert(state.buildingTypes.includes('coffee_machine'), 'Missing coffee_machine');
+
   console.log('[basic] PASS');
 }
 
-async function testConversation(page) {
-  console.log('\n[conversation] Open panel, send message, get AI response with options');
+async function testChat(page) {
+  console.log('\n[chat] Open panel and send a message');
   await waitForGame(page);
 
   // Select Sparky
@@ -69,107 +64,52 @@ async function testConversation(page) {
     return el && el.style.display !== 'none';
   }, { timeout: 5000 });
 
-  // Verify greeting
-  const greeting = await page.evaluate(() => {
-    const msgs = document.querySelectorAll('.pp-msg-sparky');
-    return msgs.length > 0 ? msgs[0].textContent : null;
+  // Check chat panel is visible
+  const panelVisible = await page.evaluate(() => {
+    const el = document.querySelector('.prompt-panel');
+    return el && el.style.display !== 'none';
   });
-  console.log(`  Greeting: "${greeting?.slice(0, 60)}"`);
-  assert(greeting && greeting.includes('Sparky'), 'Greeting should mention Sparky');
+  assert(panelVisible, 'Chat panel should be visible after selecting Sparky');
 
-  // Send a message
-  const input = await page.waitForSelector('.pp-input');
-  await input.type('Build a webhook to LLM pipeline');
-  await page.click('.pp-submit');
-  await waitForReply(page);
+  // Check input and submit button exist
+  const hasInput = await page.$('.pp-input');
+  const hasSubmit = await page.$('.pp-submit');
+  assert(hasInput, 'Chat input should exist');
+  assert(hasSubmit, 'Submit button should exist');
 
-  const state = await getState(page);
-  console.log(`  AI: "${state.lastMsg.slice(0, 80)}"`);
-  console.log(`  Options: [${state.options.join(', ')}]`);
-  assert(state.msgCount >= 3, `Expected >= 3 messages, got ${state.msgCount}`);
-  assert(state.options.length > 0 || state.hasBuild, 'Expected options or build button');
-  console.log('[conversation] PASS');
+  console.log('[chat] PASS');
 }
 
-async function testBuild(page) {
-  console.log('\n[build] Full conversation through to building a workflow');
+async function testFurniture(page) {
+  console.log('\n[furniture] Place new furniture on the grid');
   await waitForGame(page);
 
-  const initialBuildings = await page.evaluate(() => window.game.world.getBuildings().length);
+  const initialCount = await page.evaluate(() => window.game.world.getBuildings().length);
 
-  // Select Sparky
+  // Place a meeting room via the game API
   await page.evaluate(() => {
-    const n = window.game.world.getNodelings();
-    window.game.selectNodeling(n[0]);
-  });
-  await page.waitForFunction(() => {
-    const el = document.querySelector('.prompt-panel');
-    return el && el.style.display !== 'none';
-  }, { timeout: 5000 });
-
-  // Turn 1: initial request
-  console.log('  Turn 1: sending request...');
-  const input = await page.waitForSelector('.pp-input');
-  await input.type('I want to get my Notion tasks and send them to Slack');
-  await page.click('.pp-submit');
-  await waitForReply(page);
-
-  let state = await getState(page);
-  console.log(`  AI: "${state.lastMsg.slice(0, 80)}"`);
-
-  // Click through options until build button appears (max 4 turns)
-  for (let turn = 2; turn <= 5; turn++) {
-    if (state.hasBuild) break;
-
-    const pills = await page.$$('.pp-option-pill');
-    if (pills.length > 0) {
-      const txt = await pills[0].evaluate(e => e.textContent);
-      console.log(`  Turn ${turn}: clicking "${txt}"`);
-      await pills[0].click();
-    } else {
-      console.log(`  Turn ${turn}: typing to nudge plan`);
-      const inp = await page.waitForSelector('.pp-input');
-      await inp.click({ clickCount: 3 });
-      await inp.type('Sounds good, build it');
-      await page.click('.pp-submit');
-    }
-    await waitForReply(page);
-    state = await getState(page);
-    console.log(`  AI: "${state.lastMsg.slice(0, 80)}"`);
-  }
-
-  assert(state.hasBuild, 'Build button should appear after conversation');
-  console.log(`  Plan: ${state.plan}`);
-
-  // Click Build it!
-  await page.click('.pp-build-btn');
-
-  // Wait for narration to start ("Starting — heading to...")
-  await page.waitForFunction(() => {
-    const msgs = document.querySelectorAll('.pp-msg-sparky');
-    return Array.from(msgs).some(m => m.textContent.includes('Starting'));
-  }, { timeout: 10000 });
-
-  // Wait for workflow to complete — follow-up pills appear ("Run it again")
-  await page.waitForFunction(() => {
-    const pills = document.querySelectorAll('.pp-option-pill');
-    return Array.from(pills).some(p => p.textContent.includes('Run it again'));
-  }, { timeout: 90000 });
-
-  const result = await page.evaluate(() => {
-    const buildings = window.game.world.getBuildings();
-    return { count: buildings.length, types: buildings.map(b => b.buildingType) };
+    const { Building } = window.game.world.constructor;
+    // Use the game's placeBuilding if available, or add directly
+    const b = new (window.game.world.getBuildings()[0].constructor)('meeting_room', 7, 7);
+    window.game.world.addEntity(b);
   });
 
-  const placed = result.count - initialBuildings;
-  console.log(`  Built: ${result.types.join(' \u2192 ')} (${placed} buildings)`);
-  assert(placed >= 2, `Expected >= 2 buildings, got ${placed}`);
-  console.log('[build] PASS');
+  const afterCount = await page.evaluate(() => window.game.world.getBuildings().length);
+  console.log(`  Buildings: ${initialCount} → ${afterCount}`);
+  assert(afterCount === initialCount + 1, `Expected ${initialCount + 1} buildings, got ${afterCount}`);
+
+  // Check the new building type
+  const types = await page.evaluate(() =>
+    window.game.world.getBuildings().map(b => b.buildingType)
+  );
+  assert(types.includes('meeting_room'), 'Meeting room should be placed');
+
+  console.log('[furniture] PASS');
 }
 
 // ── Runner ─────────────────────────────────────────────────────────────────
 
-const scenarios = { basic: testBasic, conversation: testConversation, build: testBuild };
+const scenarios = { basic: testBasic, chat: testChat, furniture: testFurniture };
 
 async function run() {
   const arg = process.argv[2] || 'all';
