@@ -1,4 +1,5 @@
 import type { Building } from '../entities/Building';
+import type { WorkflowEdge, EdgeConditionKind } from '../game/WorkflowGraph';
 import { SVG_ICONS } from '../game/icons';
 import { apiFetch } from '../api';
 
@@ -152,6 +153,9 @@ export class NodeInfoPanel {
   onAddTask: ((building: Building, payload: string) => void) | null = null;
   /** Callback: fired when user clicks "Connect MCP" on an integration building */
   onOpenMCP: (() => void) | null = null;
+  onCreateEdge: ((edge: WorkflowEdge) => void) | null = null;
+  onDeleteEdge: ((edgeId: string) => void) | null = null;
+  getWorkflowContext: ((building: Building) => { nodeId: string; nodes: { id: string; label: string }[]; edges: WorkflowEdge[] }) | null = null;
 
   constructor(overlay: HTMLElement) {
     this.container = overlay;
@@ -307,6 +311,7 @@ export class NodeInfoPanel {
 
     // Build action buttons based on building type
     const actionsHTML = this.buildActionsHTML(b);
+    const workflowHTML = this.buildWorkflowHTML(b);
 
     // MCP status placeholder — filled async for integration buildings
     const isMCPType = MCP_BUILDING_TYPES.includes(b.buildingType);
@@ -325,6 +330,7 @@ export class NodeInfoPanel {
       <p class="nip-desc">${meta.desc}</p>
       ${isMCPType ? '<div class="nip-mcp-status" data-mcp-slot></div>' : ''}
       ${actionsHTML}
+      ${workflowHTML}
       <div class="nip-icon-section">
         <label class="nip-field-label">Type</label>
         <div class="nip-icon-grid">${pickerHTML}</div>
@@ -389,6 +395,41 @@ export class NodeInfoPanel {
         if (input) input.value = '';
         this.renderFull(); // re-render to show updated queue
       }
+    });
+
+
+    // Workflow edge actions
+    this.element.querySelector('[data-action="add-edge"]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!this.building || !this.getWorkflowContext || !this.onCreateEdge) return;
+      const toNode = this.element.querySelector<HTMLSelectElement>('[data-edge-field="to"]')?.value || '';
+      if (!toNode) return;
+      const kind = this.element.querySelector<HTMLSelectElement>('[data-edge-field="kind"]')?.value || 'always';
+      const value = this.element.querySelector<HTMLInputElement>('[data-edge-field="value"]')?.value || '';
+      const thresholdRaw = this.element.querySelector<HTMLInputElement>('[data-edge-field="threshold"]')?.value || '';
+      const ctx = this.getWorkflowContext(this.building);
+      const edge: WorkflowEdge = {
+        id: `edge-${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+        fromNodeId: ctx.nodeId,
+        toNodeId: toNode,
+        condition: {
+          kind: kind as EdgeConditionKind,
+          value: value || undefined,
+          threshold: thresholdRaw ? Number(thresholdRaw) : undefined,
+        },
+      };
+      this.onCreateEdge(edge);
+      this.renderFull();
+    });
+
+    this.element.querySelectorAll<HTMLButtonElement>('[data-action="delete-edge"]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const edgeId = btn.dataset.edgeId;
+        if (!edgeId || !this.onDeleteEdge) return;
+        this.onDeleteEdge(edgeId);
+        this.renderFull();
+      });
     });
 
     // Wire all inputs → save to config
@@ -515,6 +556,40 @@ export class NodeInfoPanel {
     }
 
     return '';
+  }
+
+
+  private buildWorkflowHTML(b: Building): string {
+    if (!this.getWorkflowContext) return '';
+    const ctx = this.getWorkflowContext(b);
+    const outgoing = ctx.edges.filter(e => e.fromNodeId === ctx.nodeId);
+    const options = ctx.nodes.map(n => `<option value="${this.escapeHtml(n.id)}">${this.escapeHtml(n.label)}</option>`).join('');
+    const rows = outgoing.length
+      ? outgoing.map(e => {
+          const cond = e.condition?.kind || 'always';
+          const detail = e.condition?.value || (e.condition?.threshold !== undefined ? `>= ${e.condition.threshold}` : '');
+          return `<div class="nip-edge-row"><span>${this.escapeHtml(e.toNodeId)}</span><span>${this.escapeHtml(cond)} ${this.escapeHtml(detail)}</span><button class="nip-edge-del" data-action="delete-edge" data-edge-id="${this.escapeHtml(e.id)}">Remove</button></div>`;
+        }).join('')
+      : '<div class="nip-action-hint">No outgoing routes</div>';
+
+    return `
+      <div class="nip-workflow">
+        <label class="nip-field-label">Routes</label>
+        <div class="nip-route-grid">
+          <select class="nip-select" data-edge-field="to">${options}</select>
+          <select class="nip-select" data-edge-field="kind">
+            <option value="always">always</option>
+            <option value="if">if/contains</option>
+            <option value="else">else</option>
+            <option value="label">label</option>
+            <option value="threshold">threshold</option>
+          </select>
+          <input class="nip-input" data-edge-field="value" placeholder="label / contains text / score key" />
+          <input class="nip-input nip-input--number" type="number" data-edge-field="threshold" placeholder="threshold" />
+        </div>
+        <button class="nip-action-btn nip-action-btn--primary" data-action="add-edge">Add Route</button>
+        <div class="nip-edge-list">${rows}</div>
+      </div>`;
   }
 
   // ── Field HTML builder ─────────────────────────────────────────────────────
@@ -1053,6 +1128,12 @@ export class NodeInfoPanel {
         padding-top: 8px;
         border-top: 1px solid rgba(255,255,255,0.05);
       }
+      .nip-workflow { display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+      .nip-route-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+      .nip-edge-list { display:flex; flex-direction:column; gap:4px; max-height:120px; overflow:auto; }
+      .nip-edge-row { display:flex; gap:6px; align-items:center; justify-content:space-between; font-size:11px; color:#94a3b8; }
+      .nip-edge-del { background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.25); color:#fecaca; border-radius:8px; padding:2px 6px; font-size:10px; cursor:pointer; }
+
       .nip-status {
         font-size: 10px; font-weight: 700;
         text-transform: uppercase; letter-spacing: 0.6px;

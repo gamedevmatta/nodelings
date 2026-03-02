@@ -2,6 +2,22 @@ import { Entity } from '../entities/Entity';
 import { Building, type BuildingType } from '../entities/Building';
 import { Item, type ItemType } from '../entities/Item';
 import { Nodeling } from '../entities/Nodeling';
+import { ensureWorldNode, type WorkflowEdge, type WorkflowGraph } from './WorkflowGraph';
+
+export interface RunHistoryEntry {
+  id: string;
+  runId: string;
+  tick: number;
+  nodeId: string;
+  buildingId: number;
+  phase: 'start' | 'complete' | 'route' | 'error';
+  inputPayload?: string;
+  outputPayload?: string;
+  nextNodeId?: string;
+  metadata?: Record<string, any>;
+  error?: string;
+  lineage: string[];
+}
 
 export class World {
   entities: Entity[] = [];
@@ -12,11 +28,15 @@ export class World {
 
   /** Quick lookup maps */
   private buildingMap = new Map<string, Building>();
+  workflowGraph: WorkflowGraph = { nodes: {}, edges: [] };
+  runHistory: RunHistoryEntry[] = [];
+  maxRunHistory = 250;
 
   addEntity(entity: Entity) {
     this.entities.push(entity);
     if (entity instanceof Building) {
       this.buildingMap.set(`${entity.gridX},${entity.gridY}`, entity);
+      ensureWorldNode(this.workflowGraph, entity);
     }
   }
 
@@ -26,6 +46,28 @@ export class World {
     if (idx >= 0) this.entities.splice(idx, 1);
     if (entity instanceof Building) {
       this.buildingMap.delete(`${entity.gridX},${entity.gridY}`);
+      const nodeIds = Object.keys(this.workflowGraph.nodes).filter(id => this.workflowGraph.nodes[id].buildingId === entity.id);
+      for (const nodeId of nodeIds) {
+        delete this.workflowGraph.nodes[nodeId];
+        this.workflowGraph.edges = this.workflowGraph.edges.filter(e => e.fromNodeId !== nodeId && e.toNodeId !== nodeId);
+      }
+    }
+  }
+
+  upsertEdge(edge: WorkflowEdge) {
+    const idx = this.workflowGraph.edges.findIndex(e => e.id === edge.id);
+    if (idx >= 0) this.workflowGraph.edges[idx] = edge;
+    else this.workflowGraph.edges.push(edge);
+  }
+
+  removeEdge(edgeId: string) {
+    this.workflowGraph.edges = this.workflowGraph.edges.filter(e => e.id !== edgeId);
+  }
+
+  appendRunHistory(entry: RunHistoryEntry) {
+    this.runHistory.push(entry);
+    if (this.runHistory.length > this.maxRunHistory) {
+      this.runHistory.splice(0, this.runHistory.length - this.maxRunHistory);
     }
   }
 
@@ -195,7 +237,8 @@ export class World {
 
     // Your first Nodeling coworker
     const nodeling1 = new Nodeling('Sparky', 6, 5);
-    nodeling1.role = 'Creative Lead';
+    nodeling1.role = 'Automation Builder';
+    nodeling1.jobTemplateId = 'builder';
     world.addEntity(nodeling1);
 
     return world;

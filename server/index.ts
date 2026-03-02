@@ -205,8 +205,17 @@ interface ProcessRequest {
   buildingType: string;
   inputPayload: string;
   buildingConfig: Record<string, string>;
+  graph?: { edges?: Array<{ fromNodeId: string; toNodeId: string; condition?: { kind?: string; value?: string; threshold?: number } }> };
+  runHistory?: Array<{ runId: string; nodeId: string; phase: string; outputPayload?: string; error?: string }>;
 }
 
+function inferRouteLabel(output: string): string {
+  const text = output.toLowerCase();
+  if (text.includes('error') || text.includes('fail')) return 'error';
+  if (text.includes('approve') || text.includes('success')) return 'success';
+  if (text.includes('review')) return 'review';
+  return 'default';
+}
 
 
 // ── Chat endpoint — LLM-driven Nodeling conversations ─────────────────────
@@ -259,7 +268,7 @@ const ALLOWED_BUILDING_TYPES = new Set([
 ]);
 
 app.post('/api/process', async (req, res) => {
-  const { buildingType, inputPayload, buildingConfig }: ProcessRequest = req.body;
+  const { buildingType, inputPayload, buildingConfig, graph, runHistory }: ProcessRequest = req.body;
 
   if (!buildingType || !ALLOWED_BUILDING_TYPES.has(buildingType)) {
     res.status(400).json({ error: `Invalid building type: ${String(buildingType).slice(0, 50)}` });
@@ -307,6 +316,16 @@ app.post('/api/process', async (req, res) => {
       const gemResult = await callGemini('gemini-2.0-flash', systemPrompt, inputPayload, 1024, apiKey);
       result = { outputPayload: gemResult.text, metadata: { buildingType, model: 'gemini-2.0-flash' } };
     }
+
+
+    const routeLabel = inferRouteLabel(result.outputPayload || '');
+    result.metadata = {
+      ...(result.metadata || {}),
+      routeLabel,
+      graphEdgeCount: graph?.edges?.length || 0,
+      recentHistory: (runHistory || []).slice(-5),
+      confidenceScore: Math.min(1, Math.max(0, (result.outputPayload || '').length / 500)),
+    };
 
     res.json(result);
   } catch (err: any) {
