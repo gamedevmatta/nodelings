@@ -204,7 +204,47 @@ app.post('/api/mcp/call', async (req, res) => {
 interface ProcessRequest {
   buildingType: string;
   inputPayload: string;
-  buildingConfig: Record<string, string>;
+  buildingConfig?: {
+    model?: string;
+    mcpTool?: string;
+    mcpArgsTemplate?: Record<string, any> | string;
+    [key: string]: any;
+  };
+}
+
+const MCP_CAPABLE_BUILDINGS = new Set(['task_wall']);
+
+function applyTemplateValue(value: any, context: Record<string, string>): any {
+  if (typeof value === 'string') {
+    return value.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key) => context[key] ?? '');
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => applyTemplateValue(item, context));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, applyTemplateValue(v, context)]),
+    );
+  }
+  return value;
+}
+
+function resolveMcpArgs(
+  mcpArgsTemplate: ProcessRequest['buildingConfig']['mcpArgsTemplate'],
+  context: Record<string, string>,
+): Record<string, any> {
+  if (!mcpArgsTemplate) return { query: context.inputPayload };
+
+  let template: Record<string, any> | string = mcpArgsTemplate;
+  if (typeof template === 'string') {
+    try {
+      template = JSON.parse(template) as Record<string, any>;
+    } catch {
+      template = { query: template };
+    }
+  }
+
+  return applyTemplateValue(template, context);
 }
 
 
@@ -270,6 +310,31 @@ app.post('/api/process', async (req, res) => {
 
   try {
     let result: { outputPayload: string; metadata: Record<string, any> };
+    const candidateServer = mcpHub.findServerForBuilding(buildingType);
+    const requestedTool = buildingConfig?.mcpTool;
+    const isMcpCapable = MCP_CAPABLE_BUILDINGS.has(buildingType);
+
+    if (isMcpCapable && candidateServer && mcpHub.isConnected(candidateServer) && requestedTool) {
+      const serverTools = mcpHub.getToolsForServer(candidateServer);
+      const toolExists = serverTools.some((tool) => tool.name === requestedTool);
+      if (toolExists) {
+        const mcpArgs = resolveMcpArgs(buildingConfig?.mcpArgsTemplate, {
+          inputPayload,
+          buildingType,
+        });
+        const toolOutput = await mcpHub.callTool(candidateServer, requestedTool, mcpArgs);
+        res.json({
+          outputPayload: toolOutput,
+          metadata: {
+            buildingType,
+            executionMode: 'mcp',
+            serverName: candidateServer,
+            toolName: requestedTool,
+          },
+        });
+        return;
+      }
+    }
 
     if (!getBackend(sessionId)) {
       res.status(503).json({ error: 'No AI API key configured (set ANTHROPIC_API_KEY or GEMINI_API_KEY in .env)' });
@@ -301,11 +366,35 @@ app.post('/api/process', async (req, res) => {
         messages: [{ role: 'user', content: inputPayload }],
       });
       const text = (msg.content[0] as any).text || '';
-      result = { outputPayload: text, metadata: { buildingType, model: 'claude-sonnet-4-20250514' } };
+      result = {
+        outputPayload: text,
+        metadata: {
+          buildingType,
+          model: 'claude-sonnet-4-20250514',
+          executionMode: 'llm',
+          serverName: candidateServer,
+          toolName: requestedTool,
+          fallbackReason: isMcpCapable
+            ? (!candidateServer ? 'no_mcp_server' : (!requestedTool ? 'missing_mcp_tool_config' : 'tool_unavailable'))
+            : 'building_not_mcp_capable',
+        },
+      };
     } else {
       const apiKey = getKey(sessionId, 'geminiKey') || GEMINI_API_KEY;
       const gemResult = await callGemini('gemini-2.0-flash', systemPrompt, inputPayload, 1024, apiKey);
-      result = { outputPayload: gemResult.text, metadata: { buildingType, model: 'gemini-2.0-flash' } };
+      result = {
+        outputPayload: gemResult.text,
+        metadata: {
+          buildingType,
+          model: 'gemini-2.0-flash',
+          executionMode: 'llm',
+          serverName: candidateServer,
+          toolName: requestedTool,
+          fallbackReason: isMcpCapable
+            ? (!candidateServer ? 'no_mcp_server' : (!requestedTool ? 'missing_mcp_tool_config' : 'tool_unavailable'))
+            : 'building_not_mcp_capable',
+        },
+      };
     }
 
     res.json(result);
