@@ -100,6 +100,7 @@ export class World {
   applySnapshot(snapshot: RoomSnapshot) {
     this.presence = snapshot.presence;
 
+    const previousResultIds = new Set(this.getItems().filter((item) => item.itemType === 'result').map((item) => item.id));
     const byId = new Map(this.entities.map((entity) => [entity.id, entity]));
     const next: Entity[] = [];
 
@@ -160,6 +161,9 @@ export class World {
     for (const b of this.getBuildings()) {
       this.buildingMap.set(`${b.gridX},${b.gridY}`, b);
     }
+
+    const hasNewResult = this.getItems().some((item) => item.itemType === 'result' && !previousResultIds.has(item.id));
+    if (hasNewResult) this.onResultProduced?.();
   }
 
   tick() {

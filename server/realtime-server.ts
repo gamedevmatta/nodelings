@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import type { Express, Request, Response } from 'express';
-import type { Server as HTTPServer } from 'http';
 import type {
+  BuildingState,
   PresenceState,
   RealtimeEnvelope,
   RoomCommand,
@@ -25,6 +25,16 @@ interface PersistedState {
 }
 
 const PERSIST_PATH = path.join(process.cwd(), 'server', 'data', 'rooms.snapshot.json');
+const PROCESS_TIMES: Record<string, number> = {
+  desk: 90,
+  meeting_room: 120,
+  whiteboard: 60,
+  task_wall: 90,
+  server_rack: 150,
+  library: 90,
+  break_room: 45,
+  coffee_machine: 30,
+};
 
 function defaultWorld(): RoomWorldState {
   return {
@@ -50,7 +60,7 @@ function createRoom(roomId: string): RoomSnapshot {
   };
 }
 
-export function setupRealtimeServer(app: Express, _httpServer: HTTPServer, options: RealtimeServerOptions) {
+export function setupRealtimeServer(app: Express, options: RealtimeServerOptions) {
   const rooms = new Map<string, RoomRuntime>();
 
   hydrate(rooms);
@@ -158,6 +168,14 @@ export function setupRealtimeServer(app: Express, _httpServer: HTTPServer, optio
 
     res.json({ ok: true, version: room.snapshot.version });
   });
+
+  setInterval(() => {
+    for (const room of rooms.values()) {
+      if (tickWorld(room.snapshot.world)) {
+        publish(room, 'command');
+      }
+    }
+  }, 1000 / 10);
 }
 
 function applyCommand(world: RoomWorldState, command: RoomCommand) {
@@ -181,14 +199,16 @@ function applyCommand(world: RoomWorldState, command: RoomCommand) {
 
   if (command.type === 'assignTask') {
     const building = world.buildings.find((b) => b.id === command.payload.buildingId);
-    if (!building) return;
+    if (!building || building.processing) return;
+    const taskPayload = command.payload.payload || 'Process this task';
+
     const itemId = world.nextEntityId++;
     world.items.push({
       id: itemId,
       itemType: 'task',
       gridX: building.gridX,
       gridY: building.gridY,
-      payload: command.payload.payload || 'Process this task',
+      payload: taskPayload,
       metadata: {},
       storedIn: building.id,
       carried: false,
@@ -199,13 +219,13 @@ function applyCommand(world: RoomWorldState, command: RoomCommand) {
       id: assignmentId,
       buildingId: building.id,
       itemId,
-      payload: command.payload.payload || 'Process this task',
-      status: 'queued',
+      payload: taskPayload,
+      status: 'processing',
     });
 
     building.processing = true;
-    building.processingPayload = command.payload.payload || 'Process this task';
-    building.processTimer = 1;
+    building.processingPayload = taskPayload;
+    building.processTimer = 0;
     world.processingStates.push({
       buildingId: building.id,
       assignmentId,
@@ -222,6 +242,74 @@ function applyCommand(world: RoomWorldState, command: RoomCommand) {
     nodeling.gridY = command.payload.targetY;
     nodeling.state = 'moving';
   }
+}
+
+function tickWorld(world: RoomWorldState): boolean {
+  let changed = false;
+
+  for (const building of world.buildings) {
+    if (!building.processing) continue;
+
+    building.processTimer += 1;
+    changed = true;
+
+    const maxTicks = PROCESS_TIMES[building.buildingType] ?? 90;
+    if (building.processTimer < maxTicks) continue;
+
+    finishProcessing(world, building);
+  }
+
+  return changed;
+}
+
+function finishProcessing(world: RoomWorldState, building: BuildingState) {
+  building.processing = false;
+  building.awaitingAsync = false;
+  building.processTimer = 0;
+
+  const runningProc = world.processingStates.find((p) => p.buildingId === building.id && p.status === 'running');
+  if (!runningProc) return;
+
+  runningProc.status = 'done';
+  const assignment = world.assignments.find((a) => a.id === runningProc.assignmentId);
+  if (assignment) assignment.status = 'completed';
+
+  const taskItemIdx = world.items.findIndex((i) => i.id === (assignment?.itemId ?? -1));
+  const payload = assignment?.payload || building.processingPayload || '';
+
+  if (taskItemIdx >= 0) world.items.splice(taskItemIdx, 1);
+
+  const resultPos = getResultPosition(world, building);
+  world.items.push({
+    id: world.nextEntityId++,
+    itemType: 'result',
+    gridX: resultPos.x,
+    gridY: resultPos.y,
+    payload: `[Processed] ${payload}`,
+    metadata: { buildingType: building.buildingType },
+    storedIn: null,
+    carried: false,
+  });
+
+  building.resultPayload = `[Processed] ${payload}`;
+  building.resultMetadata = { buildingType: building.buildingType };
+  building.processingPayload = '';
+}
+
+function getResultPosition(world: RoomWorldState, building: BuildingState) {
+  const dirs = [
+    { x: 0, y: 1 },
+    { x: 0, y: -1 },
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+  ];
+  for (const d of dirs) {
+    const nx = building.gridX + d.x;
+    const ny = building.gridY + d.y;
+    const blocked = world.buildings.some((b) => b.gridX === nx && b.gridY === ny);
+    if (!blocked) return { x: nx, y: ny };
+  }
+  return { x: building.gridX, y: building.gridY + 1 };
 }
 
 function upsertPresence(snapshot: RoomSnapshot, sessionId: string, clientId: string, patch: Partial<PresenceState>) {
