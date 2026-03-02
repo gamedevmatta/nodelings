@@ -44,8 +44,8 @@ export class Nodeling extends Entity {
   /** Base idle color (set by role on spawn) */
   baseColor = '#4ecdc4';
 
-  constructor(name: string, gx: number, gy: number) {
-    super('nodeling', gx, gy);
+  constructor(name: string, gx: number, gy: number, id?: number) {
+    super('nodeling', gx, gy, id);
     this.name = name;
     this.renderLayer = 2;
     this.updateWorldPosition();

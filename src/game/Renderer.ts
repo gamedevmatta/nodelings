@@ -82,6 +82,8 @@ export class Renderer {
       this.drawGhostBuilding(hoverGridX, hoverGridY, placingType, world, time);
     }
 
+    this.drawPresence(world);
+
     this.ctx.restore();
 
     // Dim overlay for unpowered state
@@ -175,6 +177,23 @@ export class Renderer {
       this.ctx.lineTo(fs.x + cr, fs.y - cr * 0.6);
       this.ctx.stroke();
       this.ctx.lineCap = 'butt';
+    }
+  }
+
+
+  private drawPresence(world: World) {
+    const z = this.camera.zoom;
+    for (const presence of world.presence) {
+      const screen = this.camera.gridToScreen(presence.cursorX, presence.cursorY);
+      this.ctx.fillStyle = 'rgba(14,165,233,0.9)';
+      this.ctx.beginPath();
+      this.ctx.arc(screen.x, screen.y, 5 * z, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      this.ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      this.ctx.font = `${10 * z}px monospace`;
+      this.ctx.textAlign = 'left';
+      this.ctx.fillText(`${presence.clientId.slice(0, 4)} • ${presence.status}`, screen.x + 8 * z, screen.y - 6 * z);
     }
   }
 

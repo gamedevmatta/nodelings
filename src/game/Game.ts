@@ -4,7 +4,6 @@ import { Renderer } from './Renderer';
 import { World } from './World';
 import { Nodeling } from '../entities/Nodeling';
 import { Building, type BuildingType } from '../entities/Building';
-import { Item } from '../entities/Item';
 import { PromptPanel } from '../ui/PromptPanel';
 import { HUD } from '../ui/HUD';
 import { SettingsPanel } from '../ui/SettingsPanel';
@@ -12,7 +11,8 @@ import { TicketsPage } from '../ui/TicketsPage';
 import { NodeInfoPanel } from '../ui/NodeInfoPanel';
 import { LLMBridge } from '../agent/LLMBridge';
 import { TicketStore } from './TicketStore';
-import { initSession, apiFetch } from '../api';
+import { initSession } from '../api';
+import { RealtimeClient } from './realtime-client';
 
 const TICK_RATE = 30;
 const TICK_MS = 1000 / TICK_RATE;
@@ -25,6 +25,7 @@ export class Game {
   renderer: Renderer;
   world: World;
   llm: LLMBridge;
+  realtime: RealtimeClient;
 
   promptPanel: PromptPanel;
   hud: HUD;
@@ -35,23 +36,6 @@ export class Game {
   activePage: 'orchestrate' | 'tickets' = 'orchestrate';
 
   ticketStore = new TicketStore();
-
-  private nodelingAtBuilding = new Map<number, Building>();
-  private lastNodelingTile   = new Map<number, { x: number; y: number }>();
-  /** Tracks buildings with active async processing */
-  private processingBuildings = new Set<number>();
-
-  /** Accent colors for coworking furniture */
-  private readonly BUILDING_ACCENT: Record<string, string> = {
-    desk:           '#4ecdc4',
-    meeting_room:   '#8b5cf6',
-    whiteboard:     '#f59e0b',
-    task_wall:      '#3b82f6',
-    break_room:     '#ec4899',
-    server_rack:    '#10b981',
-    library:        '#6366f1',
-    coffee_machine: '#d97706',
-  };
 
   private lastTime = 0;
   private accumulator = 0;
@@ -72,6 +56,7 @@ export class Game {
     this.renderer = new Renderer(canvas, this.camera);
     this.world = World.createWorkspace();
     this.llm = new LLMBridge();
+    this.realtime = new RealtimeClient();
 
     // Center camera on workspace
     this.camera.centerOn(6, 5);
@@ -118,8 +103,15 @@ export class Game {
     const sparky = this.world.getNodelings().find(n => n.name === 'Sparky');
     if (sparky) sparky.showHint = true;
 
-    // Initialize anonymous session
-    initSession().catch(() => {});
+    // Initialize anonymous session + realtime room connection
+    initSession()
+      .then(() => {
+        this.realtime.onSnapshot = (snapshot) => {
+          this.world.applySnapshot(snapshot);
+        };
+        this.realtime.connect();
+      })
+      .catch(() => {});
 
     requestAnimationFrame((t) => this.loop(t));
   }
@@ -147,6 +139,10 @@ export class Game {
     this.ticketsPage.update();
     this.nodeInfoPanel.update();
 
+    if (this.tickCount % 10 === 0) {
+      this.realtime.publishPresence(this.input.gridX, this.input.gridY).catch(() => {});
+    }
+
     requestAnimationFrame((t) => this.loop(t));
   }
 
@@ -159,27 +155,9 @@ export class Game {
       this.handleClick(click.gridX, click.gridY, click.screenX, click.screenY);
     }
 
-    // Update world
+    // Update local-only visuals
     this.world.tick();
-    this.tickNodeInteractions();
 
-    // Fire async processing for newly-started buildings
-    for (const building of this.world.getBuildings()) {
-      if (building.processing && !building.awaitingAsync && !this.processingBuildings.has(building.id)) {
-        this.processingBuildings.add(building.id);
-        building.awaitingAsync = true;
-        this.processBuilding(building);
-      }
-    }
-
-    // Produce result items when buildings finish
-    for (const building of this.world.getBuildings()) {
-      if (building.justFinished) {
-        building.justFinished = false;
-        this.processingBuildings.delete(building.id);
-        this.produceResult(building);
-      }
-    }
   }
 
   private handleClick(gridX: number, gridY: number, screenX: number, screenY: number) {
@@ -188,8 +166,10 @@ export class Game {
       const gx = Math.round(gridX);
       const gy = Math.round(gridY);
       if (this.world.isWalkable(gx, gy)) {
-        const building = new Building(this.placingType, gx, gy);
-        this.world.addEntity(building);
+        this.realtime.sendCommand({
+          type: 'placeBuilding',
+          payload: { buildingType: this.placingType, gridX: gx, gridY: gy },
+        }).catch(() => {});
         this.placingType = null;
       } else {
         this.renderer.flashInvalidTile(gx, gy);
@@ -281,13 +261,16 @@ export class Game {
         this.ticketStore.append(nodeling.id, 'nodeling', response, this.tickCount);
         nodeling.setState('happy');
 
-        // If there's a nearby building, walk toward it to "work"
+        // Server-authoritative move intent
         const nearestBuilding = this.world.getAdjacentBuilding(nodeling.gridX, nodeling.gridY)
           || this.findNearestProcessor(nodeling);
         if (nearestBuilding) {
-          const path = this.world.findPath(nodeling.gridX, nodeling.gridY, nearestBuilding.gridX, nearestBuilding.gridY);
-          if (path.length > 0) {
-            nodeling.startPath(path);
+          const target = this.world.getAdjacentWalkable(nearestBuilding.gridX, nearestBuilding.gridY);
+          if (target) {
+            this.realtime.sendCommand({
+              type: 'moveNodeling',
+              payload: { nodelingId: nodeling.id, targetX: target.x, targetY: target.y },
+            }).catch(() => {});
           }
         }
 
@@ -379,76 +362,8 @@ export class Game {
     this.world.removeEntity(nodeling);
   }
 
-  private getUniqueNodelingName(base: string): string {
-    const existing = this.world.getNodelings().map(n => n.name);
-    if (!existing.includes(base)) return base;
-    let i = 2;
-    while (existing.includes(`${base} ${i}`)) i++;
-    return `${base} ${i}`;
-  }
 
-  private findSpawnTile(): { x: number; y: number } | null {
-    const cx = Math.floor(this.world.gridWidth / 2);
-    const cy = Math.floor(this.world.gridHeight / 2);
-    for (let r = 0; r < 50; r++) {
-      for (let dx = -r; dx <= r; dx++) {
-        for (let dy = -r; dy <= r; dy++) {
-          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-          const gx = cx + dx;
-          const gy = cy + dy;
-          if (this.world.isWalkable(gx, gy)) {
-            return { x: gx, y: gy };
-          }
-        }
-      }
-    }
-    return null;
-  }
 
-  /** Duration a nodeling pauses at a given building type */
-  private getBuildingWorkDuration(b: Building): number {
-    switch (b.buildingType) {
-      case 'server_rack':
-      case 'meeting_room':  return 90;
-      case 'desk':
-      case 'library':       return 60;
-      case 'whiteboard':    return 45;
-      default:              return 30;
-    }
-  }
-
-  /** Pause nodelings when they walk adjacent to furniture */
-  private tickNodeInteractions() {
-    for (const n of this.world.getNodelings()) {
-      if (n.nodeWorkPaused) {
-        n.nodeWorkTimer++;
-        if (n.nodeWorkTimer >= n.nodeWorkDuration) {
-          n.nodeWorkPaused  = false;
-          n.nodeWorkTimer   = 0;
-          n.atNodeX = -1;
-          n.atNodeY = -1;
-          this.nodelingAtBuilding.delete(n.id);
-          if (n.state === 'at_node') n.setState('moving');
-        }
-      } else if (n.state === 'moving') {
-        const last = this.lastNodelingTile.get(n.id);
-        if (!last || last.x !== n.gridX || last.y !== n.gridY) {
-          this.lastNodelingTile.set(n.id, { x: n.gridX, y: n.gridY });
-          const building = this.world.getAdjacentBuilding(n.gridX, n.gridY);
-          if (building) {
-            n.nodeWorkPaused   = true;
-            n.nodeWorkTimer    = 0;
-            n.nodeWorkDuration = this.getBuildingWorkDuration(building);
-            n.atNodeX = building.gridX;
-            n.atNodeY = building.gridY;
-            n.domeColor = this.BUILDING_ACCENT[building.buildingType] ?? '#4ecdc4';
-            n.setState('at_node');
-            this.nodelingAtBuilding.set(n.id, building);
-          }
-        }
-      }
-    }
-  }
 
   /** Find nearest processor building */
   private findNearestProcessor(n: Nodeling): Building | null {
@@ -465,66 +380,10 @@ export class Game {
 
   /** Add a task item to a building */
   addTaskToBuilding(building: Building, payload: string = '') {
-    const task = new Item('task', building.gridX, building.gridY);
-    task.payload = payload || 'Process this task';
-    task.storedIn = building.id;
-    building.inventory.push(task);
-    this.world.addEntity(task);
-
-    if (building.isProcessor() && !building.processing) {
-      building.processing = true;
-      building.processTimer = 0;
-      building.processingPayload = task.payload;
-    }
+    this.realtime.sendCommand({
+      type: 'assignTask',
+      payload: { buildingId: building.id, payload: payload || 'Process this task' },
+    }).catch(() => {});
   }
 
-  /** Produce a result when a building finishes processing */
-  produceResult(building: Building) {
-    const dirs = [
-      { x: 0, y: 1 }, { x: 0, y: -1 }, { x: 1, y: 0 }, { x: -1, y: 0 },
-    ];
-    let spawnX = building.gridX;
-    let spawnY = building.gridY + 1;
-    for (const d of dirs) {
-      if (this.world.isWalkable(building.gridX + d.x, building.gridY + d.y)) {
-        spawnX = building.gridX + d.x;
-        spawnY = building.gridY + d.y;
-        break;
-      }
-    }
-    const result = new Item('result', spawnX, spawnY);
-    result.payload = building.resultPayload || '';
-    result.metadata = { ...building.resultMetadata };
-    building.resultPayload = '';
-    building.resultMetadata = {};
-    this.world.addEntity(result);
-    this.world.onResultProduced?.();
-  }
-
-  /** Send building work to backend */
-  private async processBuilding(building: Building) {
-    const config = this.nodeInfoPanel.getBuildingConfig(building.id);
-    const payload = building.processingPayload;
-
-    try {
-      const res = await apiFetch('/api/process', {
-        method: 'POST',
-        body: JSON.stringify({
-          buildingType: building.buildingType,
-          inputPayload: payload,
-          buildingConfig: config,
-        }),
-        signal: AbortSignal.timeout(90_000),
-      });
-      if (res.ok) {
-        const data = await res.json() as { outputPayload: string; metadata?: Record<string, any> };
-        building.completeAsync(data.outputPayload || '', data.metadata);
-        return;
-      }
-    } catch (err) {
-      console.error('[processBuilding] Backend call failed:', err);
-    }
-
-    building.completeAsync(`[Processed] ${payload}`);
-  }
 }

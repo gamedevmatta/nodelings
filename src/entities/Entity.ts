@@ -2,6 +2,10 @@ export type EntityType = 'nodeling' | 'building' | 'item';
 
 let nextId = 1;
 
+function syncNextId(id: number) {
+  if (id >= nextId) nextId = id + 1;
+}
+
 export class Entity {
   readonly id: number;
   readonly type: EntityType;
@@ -14,8 +18,9 @@ export class Entity {
   renderLayer = 0;
   removed = false;
 
-  constructor(type: EntityType, gx: number, gy: number) {
-    this.id = nextId++;
+  constructor(type: EntityType, gx: number, gy: number, forcedId?: number) {
+    this.id = forcedId ?? nextId++;
+    syncNextId(this.id);
     this.type = type;
     this.gridX = gx;
     this.gridY = gy;
@@ -27,6 +32,10 @@ export class Entity {
     const x = this.gridX * TILE_SIZE;
     const y = this.gridY * TILE_SIZE;
     return { x, y };
+  }
+
+  static ensureNextIdAtLeast(id: number) {
+    syncNextId(id);
   }
 
   updateWorldPosition() {

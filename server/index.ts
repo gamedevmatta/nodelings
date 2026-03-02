@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import { MCPHub } from './mcp-hub.js';
 import { createSession, sessionExists, setKeys, getKey, getKeyStatus } from './session-store.js';
+import { setupRealtimeServer } from './realtime-server.js';
 
 const app = express();
 
@@ -356,7 +358,14 @@ if (fs.existsSync(distPath)) {
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const HOST = process.env.HOST || '0.0.0.0';
-app.listen(PORT, HOST, async () => {
+const httpServer = createServer(app);
+
+setupRealtimeServer(app, httpServer, {
+  getSessionId,
+  sessionExists,
+});
+
+httpServer.listen(PORT, HOST, async () => {
   console.log(`[nodelings-server] listening on http://${HOST}:${PORT}`);
   console.log(`  Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓' : '✗ missing'}`);
   console.log(`  Gemini key:    ${GEMINI_API_KEY ? '✓' : '✗ missing'}`);
