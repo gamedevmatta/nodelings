@@ -1,8 +1,8 @@
 import { Camera } from './Camera';
 import { Input } from './Input';
 import { Renderer } from './Renderer';
-import { World } from './World';
-import { Nodeling } from '../entities/Nodeling';
+import { World, type RunHistoryEntry } from './World';
+import { Nodeling, NODELING_JOB_TEMPLATES } from '../entities/Nodeling';
 import { Building, type BuildingType } from '../entities/Building';
 import { Item } from '../entities/Item';
 import { PromptPanel } from '../ui/PromptPanel';
@@ -13,6 +13,7 @@ import { NodeInfoPanel } from '../ui/NodeInfoPanel';
 import { LLMBridge } from '../agent/LLMBridge';
 import { TicketStore } from './TicketStore';
 import { initSession, apiFetch } from '../api';
+import { ensureWorldNode, evaluateEdgeCondition, getNodeIdForBuildingId, type WorkflowEdge } from './WorkflowGraph';
 
 const TICK_RATE = 30;
 const TICK_MS = 1000 / TICK_RATE;
@@ -83,6 +84,9 @@ export class Game {
     this.ticketsPage   = new TicketsPage(overlay, this);
     this.nodeInfoPanel = new NodeInfoPanel(overlay);
     this.nodeInfoPanel.onAddTask = (building, payload) => this.addTaskToBuilding(building, payload);
+    this.nodeInfoPanel.onCreateEdge = (edge) => this.world.upsertEdge(edge);
+    this.nodeInfoPanel.onDeleteEdge = (edgeId) => this.world.removeEdge(edgeId);
+    this.nodeInfoPanel.getWorkflowContext = (building) => this.getWorkflowContext(building);
 
     // Handle resize
     window.addEventListener('resize', () => this.resize());
@@ -190,6 +194,7 @@ export class Game {
       if (this.world.isWalkable(gx, gy)) {
         const building = new Building(this.placingType, gx, gy);
         this.world.addEntity(building);
+        ensureWorldNode(this.world.workflowGraph, building);
         this.placingType = null;
       } else {
         this.renderer.flashInvalidTile(gx, gy);
@@ -283,7 +288,7 @@ export class Game {
 
         // If there's a nearby building, walk toward it to "work"
         const nearestBuilding = this.world.getAdjacentBuilding(nodeling.gridX, nodeling.gridY)
-          || this.findNearestProcessor(nodeling);
+          || this.resolveStartBuildingForNodeling(nodeling)
         if (nearestBuilding) {
           const path = this.world.findPath(nodeling.gridX, nodeling.gridY, nearestBuilding.gridX, nearestBuilding.gridY);
           if (path.length > 0) {
@@ -450,26 +455,68 @@ export class Game {
     }
   }
 
-  /** Find nearest processor building */
-  private findNearestProcessor(n: Nodeling): Building | null {
-    const processors = this.world.getBuildings().filter(b => b.isProcessor() && !b.processing);
-    if (processors.length === 0) return null;
-    let best = processors[0];
-    let bestDist = Math.abs(best.gridX - n.gridX) + Math.abs(best.gridY - n.gridY);
-    for (let i = 1; i < processors.length; i++) {
-      const dist = Math.abs(processors[i].gridX - n.gridX) + Math.abs(processors[i].gridY - n.gridY);
-      if (dist < bestDist) { bestDist = dist; best = processors[i]; }
+
+  private getWorkflowContext(building: Building) {
+    const nodeId = ensureWorldNode(this.world.workflowGraph, building);
+    const nodes = Object.values(this.world.workflowGraph.nodes)
+      .filter(n => n.id !== nodeId)
+      .map(n => ({ id: n.id, label: `${n.id} (${n.buildingType})` }));
+    const edges = this.world.workflowGraph.edges.filter(e => e.fromNodeId === nodeId || e.toNodeId === nodeId);
+    return { nodeId, nodes, edges };
+  }
+
+  private resolveStartBuildingForNodeling(n: Nodeling): Building | null {
+    const template = NODELING_JOB_TEMPLATES.find(t => t.id === n.jobTemplateId);
+    if (!template) return this.findNearestByType(n, 'desk');
+    return this.findNearestByType(n, template.defaultStartNodeType) || this.findNearestByType(n, 'desk');
+  }
+
+  private findNearestByType(n: Nodeling, buildingType: string): Building | null {
+    const candidates = this.world.getBuildings().filter(b => b.buildingType === buildingType && !b.processing);
+    if (!candidates.length) return null;
+    return candidates.sort((a, b) =>
+      Math.abs(a.gridX - n.gridX) + Math.abs(a.gridY - n.gridY) - (Math.abs(b.gridX - n.gridX) + Math.abs(b.gridY - n.gridY))
+    )[0];
+  }
+
+  private selectNextEdge(building: Building, outputPayload: string, metadata: Record<string, any>): WorkflowEdge | null {
+    const fromNodeId = getNodeIdForBuildingId(this.world.workflowGraph, building.id);
+    if (!fromNodeId) return null;
+    const outgoing = this.world.workflowGraph.edges.filter(e => e.fromNodeId === fromNodeId);
+    if (!outgoing.length) return null;
+
+    const standard = outgoing.filter(e => e.condition?.kind !== 'else');
+    for (const edge of standard) {
+      if (evaluateEdgeCondition(edge, { outputPayload, metadata, sourceNodeId: fromNodeId })) return edge;
     }
-    return best;
+    return outgoing.find(e => e.condition?.kind === 'else') || null;
+  }
+
+  private recordRunHistory(entry: Omit<RunHistoryEntry, 'id'>) {
+    this.world.appendRunHistory({ ...entry, id: `${entry.runId}-${entry.phase}-${Date.now()}` });
   }
 
   /** Add a task item to a building */
   addTaskToBuilding(building: Building, payload: string = '') {
+    const nodeId = ensureWorldNode(this.world.workflowGraph, building);
+    const runId = `run-${Date.now()}-${Math.floor(Math.random() * 9999)}`;
     const task = new Item('task', building.gridX, building.gridY);
     task.payload = payload || 'Process this task';
+    task.metadata = { runId, lineage: [nodeId] };
     task.storedIn = building.id;
     building.inventory.push(task);
     this.world.addEntity(task);
+
+    this.recordRunHistory({
+      runId,
+      tick: this.tickCount,
+      nodeId,
+      buildingId: building.id,
+      phase: 'start',
+      inputPayload: task.payload,
+      metadata: { template: this.selectedNodeling?.jobTemplateId || 'manual' },
+      lineage: [nodeId],
+    });
 
     if (building.isProcessor() && !building.processing) {
       building.processing = true;
@@ -495,9 +542,55 @@ export class Game {
     const result = new Item('result', spawnX, spawnY);
     result.payload = building.resultPayload || '';
     result.metadata = { ...building.resultMetadata };
+
+    const runId = String(result.metadata?.runId || `run-${Date.now()}`);
+    const currentNodeId = ensureWorldNode(this.world.workflowGraph, building);
+    const lineage = Array.isArray(result.metadata?.lineage) ? [...result.metadata.lineage] : [currentNodeId];
+    if (!lineage.includes(currentNodeId)) lineage.push(currentNodeId);
     building.resultPayload = '';
     building.resultMetadata = {};
     this.world.addEntity(result);
+
+    this.recordRunHistory({
+      runId,
+      tick: this.tickCount,
+      nodeId: currentNodeId,
+      buildingId: building.id,
+      phase: 'complete',
+      outputPayload: result.payload,
+      metadata: result.metadata,
+      lineage,
+    });
+
+    const nextEdge = this.selectNextEdge(building, result.payload, result.metadata || {});
+    if (nextEdge) {
+      const targetNode = this.world.workflowGraph.nodes[nextEdge.toNodeId];
+      const target = targetNode ? this.world.getBuildings().find(b => b.id === targetNode.buildingId) : null;
+      this.recordRunHistory({
+        runId,
+        tick: this.tickCount,
+        nodeId: currentNodeId,
+        buildingId: building.id,
+        phase: target ? 'route' : 'error',
+        nextNodeId: nextEdge.toNodeId,
+        error: target ? undefined : 'Target node missing',
+        lineage,
+      });
+      if (target) {
+        const nextTask = new Item('task', target.gridX, target.gridY);
+        nextTask.payload = result.payload;
+        nextTask.storedIn = target.id;
+        nextTask.metadata = { ...result.metadata, runId, lineage: [...lineage, nextEdge.toNodeId] };
+        target.inventory.push(nextTask);
+        this.world.addEntity(nextTask);
+        if (target.isProcessor() && !target.processing) {
+          target.processing = true;
+          target.processTimer = 0;
+          target.processingPayload = nextTask.payload;
+        }
+      }
+    }
+
     this.world.onResultProduced?.();
   }
 
@@ -505,6 +598,9 @@ export class Game {
   private async processBuilding(building: Building) {
     const config = this.nodeInfoPanel.getBuildingConfig(building.id);
     const payload = building.processingPayload;
+    const queuedTask = building.inventory.find(i => i.itemType === 'task');
+    const inheritedRunId = String(queuedTask?.metadata?.runId || `run-${Date.now()}`);
+    const inheritedLineage = Array.isArray(queuedTask?.metadata?.lineage) ? queuedTask?.metadata?.lineage : [];
 
     try {
       const res = await apiFetch('/api/process', {
@@ -513,18 +609,32 @@ export class Game {
           buildingType: building.buildingType,
           inputPayload: payload,
           buildingConfig: config,
+          graph: this.world.workflowGraph,
+          runHistory: this.world.runHistory.slice(-30),
         }),
         signal: AbortSignal.timeout(90_000),
       });
       if (res.ok) {
         const data = await res.json() as { outputPayload: string; metadata?: Record<string, any> };
-        building.completeAsync(data.outputPayload || '', data.metadata);
+        building.completeAsync(data.outputPayload || '', { ...data.metadata, runId: inheritedRunId, lineage: inheritedLineage });
         return;
       }
     } catch (err) {
       console.error('[processBuilding] Backend call failed:', err);
+      const nodeId = getNodeIdForBuildingId(this.world.workflowGraph, building.id) || `node-${building.id}`;
+      const runId = `run-${Date.now()}`;
+      this.recordRunHistory({
+        runId,
+        tick: this.tickCount,
+        nodeId,
+        buildingId: building.id,
+        phase: 'error',
+        inputPayload: payload,
+        error: String(err),
+        lineage: [nodeId],
+      });
     }
 
-    building.completeAsync(`[Processed] ${payload}`);
+    building.completeAsync(`[Processed] ${payload}`, { runId: inheritedRunId, lineage: inheritedLineage });
   }
 }

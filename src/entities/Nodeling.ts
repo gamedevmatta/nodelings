@@ -3,10 +3,52 @@ import type { Item } from './Item';
 
 export type NodelingState = 'dormant' | 'idle' | 'moving' | 'working' | 'confused' | 'happy' | 'at_node';
 
+export interface JobTemplate {
+  id: string;
+  label: string;
+  role: string;
+  defaultStartNodeType: string;
+  defaultWorkflow: Array<{ fromType: string; toType: string }>;
+}
+
+export const NODELING_JOB_TEMPLATES: JobTemplate[] = [
+  {
+    id: 'analyst',
+    label: 'Research Analyst',
+    role: 'Research Analyst',
+    defaultStartNodeType: 'library',
+    defaultWorkflow: [
+      { fromType: 'library', toType: 'whiteboard' },
+      { fromType: 'whiteboard', toType: 'task_wall' },
+    ],
+  },
+  {
+    id: 'builder',
+    label: 'Automation Builder',
+    role: 'Automation Builder',
+    defaultStartNodeType: 'desk',
+    defaultWorkflow: [
+      { fromType: 'desk', toType: 'server_rack' },
+      { fromType: 'server_rack', toType: 'task_wall' },
+    ],
+  },
+  {
+    id: 'reviewer',
+    label: 'Review Coordinator',
+    role: 'Review Coordinator',
+    defaultStartNodeType: 'meeting_room',
+    defaultWorkflow: [
+      { fromType: 'meeting_room', toType: 'desk' },
+      { fromType: 'desk', toType: 'task_wall' },
+    ],
+  },
+];
+
 export class Nodeling extends Entity {
   state: NodelingState = 'dormant';
   name: string;
   role: string = 'Assistant';
+  jobTemplateId = 'builder';
 
   /** Movement */
   path: { x: number; y: number }[] = [];
