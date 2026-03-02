@@ -4,6 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import { MCPHub } from './mcp-hub.js';
+import { resolveIntegrationConfig } from './mcp-integrations.js';
 import { createSession, sessionExists, setKeys, getKey, getKeyStatus } from './session-store.js';
 
 const app = express();
@@ -26,6 +27,53 @@ app.use('/api/', apiLimiter);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const mcpHub = new MCPHub();
+const scopedMcpHubs = new Map<string, MCPHub>();
+
+const MCP_ADMIN_ROLES = new Set(['owner', 'admin']);
+
+interface MCPAuthContext {
+  sessionId: string;
+  roomId: string;
+  role: string;
+  scopeId: string;
+}
+
+function getMcpAuthContext(req: express.Request): MCPAuthContext | null {
+  const sessionId = getSessionId(req);
+  const roomId = (req.headers['x-room-id'] as string) || req.body?.roomId;
+  const role = ((req.headers['x-room-role'] as string) || req.body?.role || '').toLowerCase();
+  if (!sessionId || !sessionExists(sessionId) || !roomId || !MCP_ADMIN_ROLES.has(role)) {
+    return null;
+  }
+  return {
+    sessionId,
+    roomId,
+    role,
+    scopeId: `${sessionId}:${roomId}`,
+  };
+}
+
+function getScopedMcpHub(scopeId: string): MCPHub {
+  const existing = scopedMcpHubs.get(scopeId);
+  if (existing) return existing;
+  const hub = new MCPHub({ configPath: null });
+  scopedMcpHubs.set(scopeId, hub);
+  return hub;
+}
+
+function redactMcpStatus(servers: ReturnType<MCPHub['getStatus']>) {
+  return servers.map((server) => ({
+    name: server.name,
+    connected: server.connected,
+    toolCount: server.toolCount,
+    tools: server.tools,
+    config: {
+      command: server.config.command,
+      args: server.config.args,
+      env: Object.keys(server.config.env || {}),
+    },
+  }));
+}
 
 // ── Gemini REST helper ───────────────────────────────────────────────────────
 
@@ -152,25 +200,45 @@ app.put('/api/session/keys', (req, res) => {
 
 // ── MCP management endpoints ────────────────────────────────────────────────
 
-app.get('/api/mcp/status', (_req, res) => {
-  const servers = mcpHub.getStatus();
-  const totalTools = mcpHub.getAllTools().length;
+app.get('/api/mcp/status', (req, res) => {
+  const auth = getMcpAuthContext(req);
+  if (!auth) {
+    res.status(403).json({ error: 'Authenticated session with owner/admin room role required' });
+    return;
+  }
+  const hub = getScopedMcpHub(auth.scopeId);
+  const servers = redactMcpStatus(hub.getStatus());
+  const totalTools = hub.getAllTools().length;
   res.json({ servers, totalTools });
 });
 
 app.post('/api/mcp/connect', async (req, res) => {
-  const { name, command, args, env } = req.body;
-  if (!name || !command) {
-    res.status(400).json({ error: 'name and command are required' });
+  const auth = getMcpAuthContext(req);
+  if (!auth) {
+    res.status(403).json({ error: 'Authenticated session with owner/admin room role required' });
     return;
   }
+  const { integrationId, name, env } = req.body;
+  if (!integrationId || !name) {
+    res.status(400).json({ error: 'integrationId and name are required' });
+    return;
+  }
+  const resolved = resolveIntegrationConfig(integrationId, env || {});
+  if (!resolved) {
+    res.status(400).json({ error: `Unsupported integrationId: ${integrationId}` });
+    return;
+  }
+  const scopedHub = getScopedMcpHub(auth.scopeId);
   try {
-    const result = await mcpHub.connect(name, {
-      command,
-      args: args || [],
-      env: env || {},
+    const result = await scopedHub.connect(name, resolved.config);
+    res.json({
+      ok: true,
+      name,
+      integrationId,
+      envAcceptedKeys: Object.keys(resolved.config.env || {}),
+      envRejectedKeys: resolved.rejectedEnvKeys,
+      tools: result.tools,
     });
-    res.json({ ok: true, name, tools: result.tools });
   } catch (err: any) {
     console.error(`[/api/mcp/connect] error:`, err?.message ?? err);
     res.status(500).json({ error: err?.message ?? 'Failed to connect' });
@@ -178,21 +246,36 @@ app.post('/api/mcp/connect', async (req, res) => {
 });
 
 app.post('/api/mcp/disconnect', async (req, res) => {
+  const auth = getMcpAuthContext(req);
+  if (!auth) {
+    res.status(403).json({ error: 'Authenticated session with owner/admin room role required' });
+    return;
+  }
   const { name } = req.body;
-  await mcpHub.disconnect(name);
+  await getScopedMcpHub(auth.scopeId).disconnect(name);
   res.json({ ok: true });
 });
 
 app.post('/api/mcp/remove', async (req, res) => {
+  const auth = getMcpAuthContext(req);
+  if (!auth) {
+    res.status(403).json({ error: 'Authenticated session with owner/admin room role required' });
+    return;
+  }
   const { name } = req.body;
-  await mcpHub.removeServer(name);
+  await getScopedMcpHub(auth.scopeId).removeServer(name);
   res.json({ ok: true });
 });
 
 app.post('/api/mcp/call', async (req, res) => {
+  const auth = getMcpAuthContext(req);
+  if (!auth) {
+    res.status(403).json({ error: 'Authenticated session with owner/admin room role required' });
+    return;
+  }
   const { server, tool, args } = req.body;
   try {
-    const result = await mcpHub.callTool(server, tool, args || {});
+    const result = await getScopedMcpHub(auth.scopeId).callTool(server, tool, args || {});
     res.json({ result });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'Tool call failed' });
