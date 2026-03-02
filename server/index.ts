@@ -202,9 +202,11 @@ app.post('/api/mcp/call', async (req, res) => {
 // ── /api/process — coworking furniture processing ───────────────────────────
 
 interface ProcessRequest {
-  buildingType: string;
+  nodeType?: string;
+  nodeConfig?: Record<string, string>;
+  buildingType?: string;
+  buildingConfig?: Record<string, string>;
   inputPayload: string;
-  buildingConfig: Record<string, string>;
 }
 
 
@@ -253,16 +255,27 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // Allowed building types for validation
-const ALLOWED_BUILDING_TYPES = new Set([
-  'desk', 'meeting_room', 'whiteboard', 'task_wall',
-  'break_room', 'server_rack', 'library', 'coffee_machine',
-]);
+const ALLOWED_NODE_TYPES = new Set(['pull', 'push', 'think', 'decide', 'transform', 'store', 'wait']);
+const LEGACY_NODE_TYPE_MAP: Record<string, string> = {
+  desk: 'think',
+  meeting_room: 'decide',
+  whiteboard: 'transform',
+  task_wall: 'push',
+  break_room: 'wait',
+  server_rack: 'transform',
+  library: 'pull',
+  coffee_machine: 'wait',
+};
 
 app.post('/api/process', async (req, res) => {
-  const { buildingType, inputPayload, buildingConfig }: ProcessRequest = req.body;
+  const { nodeType, nodeConfig, buildingType, buildingConfig, inputPayload }: ProcessRequest = req.body;
+  const resolvedType = (nodeType && ALLOWED_NODE_TYPES.has(nodeType))
+    ? nodeType
+    : (buildingType ? LEGACY_NODE_TYPE_MAP[buildingType] : null) || 'think';
+  const resolvedConfig = nodeConfig || buildingConfig || {};
 
-  if (!buildingType || !ALLOWED_BUILDING_TYPES.has(buildingType)) {
-    res.status(400).json({ error: `Invalid building type: ${String(buildingType).slice(0, 50)}` });
+  if (!resolvedType || !ALLOWED_NODE_TYPES.has(resolvedType)) {
+    res.status(400).json({ error: `Invalid node type: ${String(nodeType || buildingType).slice(0, 50)}` });
     return;
   }
 
@@ -277,35 +290,34 @@ app.post('/api/process', async (req, res) => {
     }
 
     // All coworking furniture routes through the AI for processing
-    const furniturePrompts: Record<string, string> = {
-      desk:           'You are a focused work assistant at a desk. Process the following task concisely:',
-      meeting_room:   'You are facilitating a team meeting. Summarize and organize this discussion:',
-      whiteboard:     'You are brainstorming on a whiteboard. Generate creative ideas for:',
-      task_wall:      'You are organizing a task board. Break this down into actionable items:',
-      server_rack:    'You are a compute server processing a request. Analyze and respond to:',
-      library:        'You are a research librarian. Find relevant information about:',
-      break_room:     'You are a friendly coworker in the break room. Chat casually about:',
-      coffee_machine: 'You are a coffee machine with personality. Serve up a response to:',
+    const nodePrompts: Record<string, string> = {
+      pull: 'You pull in external context and summarize the most relevant information:',
+      push: 'You prepare output for an external destination and keep it actionable:',
+      think: 'You reason through the task and provide a concise, high-quality answer:',
+      decide: 'You evaluate options and return the best decision with rationale:',
+      transform: 'You transform the input into the requested format:',
+      store: 'You produce a persistence-ready payload and confirm what should be saved:',
+      wait: 'You acknowledge the wait condition and explain what happens next:',
     };
 
-    const systemPrompt = furniturePrompts[buildingType] || 'Process the following:';
+    const systemPrompt = nodePrompts[resolvedType] || 'Process the following:';
     const backend = getBackend(sessionId);
 
     if (backend === 'anthropic') {
       const apiKey = getKey(sessionId, 'anthropicKey') || process.env.ANTHROPIC_API_KEY || '';
       const client = apiKey === process.env.ANTHROPIC_API_KEY ? anthropic : new Anthropic({ apiKey });
       const msg = await client.messages.create({
-        model: buildingConfig?.model || 'claude-sonnet-4-20250514',
+        model: resolvedConfig?.tool || 'claude-sonnet-4-20250514',
         max_tokens: 1024,
         system: systemPrompt,
-        messages: [{ role: 'user', content: inputPayload }],
+        messages: [{ role: 'user', content: inputPayload || '' }],
       });
       const text = (msg.content[0] as any).text || '';
-      result = { outputPayload: text, metadata: { buildingType, model: 'claude-sonnet-4-20250514' } };
+      result = { outputPayload: text, metadata: { nodeType: resolvedType, model: resolvedConfig?.tool || 'claude-sonnet-4-20250514' } };
     } else {
       const apiKey = getKey(sessionId, 'geminiKey') || GEMINI_API_KEY;
-      const gemResult = await callGemini('gemini-2.0-flash', systemPrompt, inputPayload, 1024, apiKey);
-      result = { outputPayload: gemResult.text, metadata: { buildingType, model: 'gemini-2.0-flash' } };
+      const gemResult = await callGemini('gemini-2.0-flash', systemPrompt, inputPayload || '', 1024, apiKey);
+      result = { outputPayload: gemResult.text, metadata: { nodeType: resolvedType, model: 'gemini-2.0-flash' } };
     }
 
     res.json(result);

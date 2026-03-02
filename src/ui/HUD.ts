@@ -98,14 +98,13 @@ export class HUD {
   }
 
   private readonly BUILDING_LABELS: Record<string, string> = {
-    desk:           'Desk',
-    meeting_room:   'Meeting Room',
-    whiteboard:     'Whiteboard',
-    task_wall:      'Task Wall',
-    break_room:     'Break Room',
-    server_rack:    'Server Rack',
-    library:        'Library',
-    coffee_machine: 'Coffee Machine',
+    pull: 'Pull',
+    push: 'Push',
+    think: 'Think',
+    decide: 'Decide',
+    transform: 'Transform',
+    store: 'Store',
+    wait: 'Wait',
   };
 
   update() {

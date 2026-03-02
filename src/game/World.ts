@@ -189,9 +189,9 @@ export class World {
     const world = new World();
 
     // Place some starter furniture
-    world.addEntity(new Building('desk', 3, 3));
-    world.addEntity(new Building('whiteboard', 5, 2));
-    world.addEntity(new Building('coffee_machine', 8, 3));
+    world.addEntity(new Building('think', 3, 3));
+    world.addEntity(new Building('transform', 5, 2));
+    world.addEntity(new Building('wait', 8, 3));
 
     // Your first Nodeling coworker
     const nodeling1 = new Nodeling('Sparky', 6, 5);

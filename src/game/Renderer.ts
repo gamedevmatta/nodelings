@@ -217,7 +217,7 @@ export class Renderer {
     const platY = screen.y - platSize / 2;
 
     // Accent color per building type
-    const accent = this.getBuildingAccent(building.buildingType);
+    const accent = this.getBuildingAccent(building.nodeType ?? building.buildingType);
 
     // Drop shadow
     this.ctx.fillStyle = `rgba(0,0,0,${0.4 * lightMul})`;
@@ -238,7 +238,7 @@ export class Renderer {
     this.ctx.globalAlpha = 1;
 
     // Draw SVG icon centered on platform (iconKey lets the user override the default)
-    const icon = this.iconImages.get(building.iconKey ?? building.buildingType);
+    const icon = this.iconImages.get(building.iconKey ?? building.nodeType ?? building.buildingType);
     if (icon && icon.complete && icon.naturalWidth > 0) {
       const iconSize = platSize * 0.52;
       const iconX = screen.x - iconSize / 2;
@@ -281,6 +281,12 @@ export class Renderer {
       this.ctx.lineCap = 'butt';
       this.ctx.globalAlpha = 1;
     }
+
+    const label = building.displayLabel ?? (building.nodeType ?? building.buildingType);
+    this.ctx.fillStyle = `rgba(255,255,255,${0.65 * lightMul})`;
+    this.ctx.font = `${8 * z}px monospace`;
+    this.ctx.textAlign = 'center';
+    this.ctx.fillText(label.length > 16 ? `${label.slice(0, 16)}…` : label, screen.x, platY + platSize + 10 * z);
 
     // Inventory count badge for buildings holding items
     if (building.inventory.length > 0 && !building.processing) {
@@ -587,14 +593,13 @@ export class Renderer {
   /** Returns the accent color for a building type */
   private getBuildingAccent(type: string): string {
     const map: Record<string, string> = {
-      desk:           '#4ecdc4',
-      meeting_room:   '#8b5cf6',
-      whiteboard:     '#f59e0b',
-      task_wall:      '#3b82f6',
-      break_room:     '#ec4899',
-      server_rack:    '#10b981',
-      library:        '#6366f1',
-      coffee_machine: '#d97706',
+      pull:      '#22c55e',
+      push:      '#3b82f6',
+      think:     '#8b5cf6',
+      decide:    '#f59e0b',
+      transform: '#14b8a6',
+      store:     '#6366f1',
+      wait:      '#ec4899',
     };
     return map[type] ?? '#6b7280';
   }

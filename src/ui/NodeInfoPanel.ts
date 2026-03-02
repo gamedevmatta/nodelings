@@ -18,113 +18,118 @@ interface NodeMeta {
   inputs: NodeInput[];
 }
 
-/** Building types that route through MCP servers for external integrations */
-const MCP_BUILDING_TYPES = ['task_wall'];
+/** Building types that can route through MCP servers for external integrations */
+const MCP_BUILDING_TYPES = ['pull', 'push', 'transform', 'store'];
 
 interface MCPStatusCache {
   timestamp: number;
   servers: { name: string; connected: boolean; toolCount: number; tools: { name: string; description: string }[] }[];
 }
 
-const NODE_META: Record<string, NodeMeta> = {
-
-  // ── Coworking Furniture ──────────────────────────────────────────────────
-
-  desk: {
-    label: 'Desk',
-    desc: 'A personal workstation where your Nodeling does focused work. Great for writing, coding, and deep thinking.',
-    accent: '#4ecdc4',
+export const NODE_META: Record<string, NodeMeta> = {
+  pull: {
+    label: 'Pull',
+    desc: 'Ingest data from external systems into your workflow.',
+    accent: '#22c55e',
     inputs: [
-      { key: 'task_type', label: 'Focus Area', type: 'select',
-        options: ['General', 'Writing', 'Coding', 'Research', 'Design'],
-        default: 'General' },
-      { key: 'notes', label: 'Desk Notes', type: 'textarea', placeholder: 'What should this desk be used for?' },
+      { key: 'service', label: 'Service', type: 'select', options: ['gmail', 'github', 'notion', 'slack', 'http'], default: 'gmail' },
+      { key: 'provider', label: 'Provider', type: 'select', options: ['mcp', 'native'], default: 'mcp' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['sync', 'async', 'batch'], default: 'sync' },
+      { key: 'tool', label: 'Tool', type: 'text', placeholder: 'messages.list, search_issues...' },
     ],
   },
-
-  meeting_room: {
-    label: 'Meeting Room',
-    desc: 'A collaboration space where multiple Nodelings can brainstorm and work together on shared tasks.',
-    accent: '#8b5cf6',
-    inputs: [
-      { key: 'topic', label: 'Meeting Topic', type: 'text', placeholder: 'Sprint planning, design review...' },
-      { key: 'capacity', label: 'Capacity', type: 'select',
-        options: ['2 Nodelings', '4 Nodelings', '6 Nodelings', '8 Nodelings'],
-        default: '4 Nodelings' },
-    ],
-  },
-
-  whiteboard: {
-    label: 'Whiteboard',
-    desc: 'A brainstorming surface for sketching ideas, mapping flows, and planning projects.',
-    accent: '#f59e0b',
-    inputs: [
-      { key: 'board_type', label: 'Board Type', type: 'select',
-        options: ['Freeform', 'Mind Map', 'Flowchart', 'Kanban'],
-        default: 'Freeform' },
-      { key: 'topic', label: 'Topic', type: 'text', placeholder: 'Project roadmap, feature ideas...' },
-    ],
-  },
-
-  task_wall: {
-    label: 'Task Wall',
-    desc: 'A kanban board that connects to Notion or GitHub to display and manage tickets.',
+  push: {
+    label: 'Push',
+    desc: 'Send processed results back to external systems.',
     accent: '#3b82f6',
     inputs: [
-      { key: 'source', label: 'Source', type: 'select',
-        options: ['Notion', 'GitHub Issues', 'Linear', 'Manual'],
-        default: 'Manual' },
-      { key: 'project_id', label: 'Project / Board ID', type: 'text', placeholder: 'Enter project ID...' },
-      { key: 'filter', label: 'Filter', type: 'text', placeholder: 'status:in-progress assignee:me' },
+      { key: 'service', label: 'Service', type: 'select', options: ['slack', 'github', 'notion', 'email', 'webhook'], default: 'slack' },
+      { key: 'provider', label: 'Provider', type: 'select', options: ['mcp', 'native'], default: 'mcp' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['sync', 'async', 'batch'], default: 'sync' },
+      { key: 'tool', label: 'Tool', type: 'text', placeholder: 'post_message, create_issue...' },
     ],
   },
-
-  break_room: {
-    label: 'Break Room',
-    desc: 'A cozy spot where Nodelings recharge and socialize. Idle time boosts creativity!',
-    accent: '#ec4899',
+  think: {
+    label: 'Think',
+    desc: 'Run LLM reasoning and synthesis over incoming context.',
+    accent: '#8b5cf6',
     inputs: [
-      { key: 'vibe', label: 'Vibe', type: 'select',
-        options: ['Chill Lounge', 'Game Corner', 'Quiet Zone', 'Music Room'],
-        default: 'Chill Lounge' },
+      { key: 'provider', label: 'Provider', type: 'select', options: ['anthropic', 'openai', 'gemini'], default: 'anthropic' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['fast', 'balanced', 'deep'], default: 'balanced' },
+      { key: 'tool', label: 'Tool / Model', type: 'text', placeholder: 'claude-sonnet-4-20250514' },
+      { key: 'system_prompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a helpful workflow assistant...' },
     ],
   },
-
-  server_rack: {
-    label: 'Server Rack',
-    desc: 'The compute backbone of your coworking space. Handles heavy processing and AI inference.',
-    accent: '#10b981',
+  decide: {
+    label: 'Decide',
+    desc: 'Classify, score, and route work based on policy and confidence.',
+    accent: '#f59e0b',
     inputs: [
-      { key: 'model', label: 'AI Model', type: 'select',
-        options: ['Claude Sonnet 4.6', 'Claude Haiku 4.5', 'GPT-4o', 'Gemini 2.5 Flash'],
-        default: 'Claude Sonnet 4.6' },
-      { key: 'system_prompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a helpful AI assistant...' },
+      { key: 'provider', label: 'Provider', type: 'select', options: ['anthropic', 'openai', 'gemini'], default: 'anthropic' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['strict', 'balanced'], default: 'strict' },
+      { key: 'tool', label: 'Tool / Policy', type: 'text', placeholder: 'triage_v1' },
     ],
   },
-
-  library: {
-    label: 'Library',
-    desc: 'A research and reference station. Nodelings come here to look up information and learn new things.',
+  transform: {
+    label: 'Transform',
+    desc: 'Reshape inputs into structured outputs or alternate formats.',
+    accent: '#14b8a6',
+    inputs: [
+      { key: 'provider', label: 'Provider', type: 'select', options: ['anthropic', 'openai', 'gemini', 'mcp'], default: 'anthropic' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['format', 'extract', 'summarize'], default: 'format' },
+      { key: 'tool', label: 'Tool', type: 'text', placeholder: 'json_schema_mapper' },
+    ],
+  },
+  store: {
+    label: 'Store',
+    desc: 'Persist outputs in files, docs, or databases.',
     accent: '#6366f1',
     inputs: [
-      { key: 'topic', label: 'Research Topic', type: 'text', placeholder: 'API design, best practices...' },
-      { key: 'source', label: 'Source', type: 'select',
-        options: ['Web Search', 'Documentation', 'Knowledge Base', 'Papers'],
-        default: 'Web Search' },
+      { key: 'service', label: 'Service', type: 'select', options: ['notion', 'database', 'filesystem', 's3'], default: 'notion' },
+      { key: 'provider', label: 'Provider', type: 'select', options: ['mcp', 'native'], default: 'mcp' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['upsert', 'append', 'overwrite'], default: 'upsert' },
+      { key: 'tool', label: 'Tool', type: 'text', placeholder: 'upsert_record' },
     ],
   },
-
-  coffee_machine: {
-    label: 'Coffee Machine',
-    desc: 'Grab a quick coffee! Nodelings get a small energy boost after visiting.',
-    accent: '#d97706',
+  wait: {
+    label: 'Wait',
+    desc: 'Pause or throttle execution until an event or delay is met.',
+    accent: '#ec4899',
     inputs: [
-      { key: 'drink', label: 'Default Drink', type: 'select',
-        options: ['Espresso', 'Latte', 'Cappuccino', 'Green Tea', 'Hot Chocolate'],
-        default: 'Latte' },
+      { key: 'mode', label: 'Mode', type: 'select', options: ['delay', 'event', 'manual'], default: 'delay' },
+      { key: 'tool', label: 'Condition', type: 'text', placeholder: '5m / issue_opened / user_approval' },
     ],
   },
 };
+
+const LEGACY_BUILDING_TYPE_MAP: Record<string, string> = {
+  desk: 'think',
+  meeting_room: 'decide',
+  whiteboard: 'transform',
+  task_wall: 'push',
+  break_room: 'wait',
+  server_rack: 'transform',
+  library: 'pull',
+  coffee_machine: 'wait',
+};
+
+export function getNodeMeta(type: string): NodeMeta {
+  const normalized = NODE_META[type] ? type : (LEGACY_BUILDING_TYPE_MAP[type] ?? 'think');
+  return NODE_META[normalized] ?? NODE_META.think;
+}
+
+export function getConfiguredNodeDisplay(type: string, config: Record<string, string>): { label: string; iconKey: string } {
+  const meta = getNodeMeta(type);
+  const service = (config.service || '').trim();
+  const provider = (config.provider || '').trim();
+  const label = service
+    ? `${meta.label} from ${service.charAt(0).toUpperCase() + service.slice(1)}`
+    : provider
+      ? `${meta.label} (${provider})`
+      : meta.label;
+  const iconKey = service || provider || type;
+  return { label, iconKey };
+}
 
 // ── Icon data-URL helper ─────────────────────────────────────────────────────
 
@@ -165,6 +170,7 @@ export class NodeInfoPanel {
 
   show(building: Building) {
     this.building = building;
+    this.applyConfigToBuilding(building, this.getConfig(building.id));
     this.visible = true;
     this.element.style.display = 'flex';
     this.renderFull();
@@ -192,6 +198,14 @@ export class NodeInfoPanel {
   getOrCreateConfig(id: number): Record<string, string> {
     if (!this.buildingConfigs.has(id)) this.buildingConfigs.set(id, {});
     return this.buildingConfigs.get(id)!;
+  }
+
+  private applyConfigToBuilding(building: Building, config: Record<string, string>) {
+    building.nodeType = (building.nodeType ?? building.buildingType) as any;
+    building.nodeConfig = { ...config };
+    const display = getConfiguredNodeDisplay(building.nodeType, config);
+    building.displayLabel = display.label;
+    building.iconKey = display.iconKey;
   }
 
   /** Public accessor for building config (used by Game for backend calls) */
@@ -222,7 +236,12 @@ export class NodeInfoPanel {
       if (!raw) return;
       const obj = JSON.parse(raw) as Record<string, Record<string, string>>;
       for (const [id, cfg] of Object.entries(obj)) {
-        this.buildingConfigs.set(Number(id), cfg);
+        const migrated: Record<string, string> = { ...cfg };
+        if (cfg.source && !migrated.service) migrated.service = cfg.source.toLowerCase();
+        if (cfg.model && !migrated.tool) migrated.tool = cfg.model;
+        if (!migrated.provider) migrated.provider = 'anthropic';
+        if (!migrated.mode) migrated.mode = 'sync';
+        this.buildingConfigs.set(Number(id), migrated);
       }
     } catch { /* parse error */ }
   }
@@ -277,18 +296,15 @@ export class NodeInfoPanel {
 
   private renderFull() {
     const b = this.building!;
-    const meta = NODE_META[b.buildingType] ?? {
-      label: b.buildingType,
-      desc: 'A workflow node.',
-      accent: '#4ecdc4',
-      inputs: [],
-    };
+    const meta = getNodeMeta(b.buildingType);
     const config = this.getConfig(b.id);
 
-    const currentIconKey = b.iconKey ?? b.buildingType;
+    const configuredDisplay = getConfiguredNodeDisplay(b.nodeType ?? b.buildingType, config);
+    if (!b.displayLabel) b.displayLabel = configuredDisplay.label;
+    if (!b.iconKey) b.iconKey = configuredDisplay.iconKey;
+    const currentIconKey = b.iconKey ?? configuredDisplay.iconKey ?? b.buildingType;
     const headerIconUrl = iconDataUrl(currentIconKey);
-    // If a different icon is selected, show that icon's label instead
-    const displayLabel = (NODE_META[currentIconKey]?.label) ?? meta.label;
+    const displayLabel = b.displayLabel ?? configuredDisplay.label;
 
     const inputsHTML = meta.inputs.map(inp => this.buildFieldHTML(inp, config)).join('');
 
@@ -309,7 +325,7 @@ export class NodeInfoPanel {
     const actionsHTML = this.buildActionsHTML(b);
 
     // MCP status placeholder — filled async for integration buildings
-    const isMCPType = MCP_BUILDING_TYPES.includes(b.buildingType);
+    const isMCPType = MCP_BUILDING_TYPES.includes(b.nodeType ?? b.buildingType);
 
     this.element.innerHTML = `
       <div class="nip-header">
@@ -396,8 +412,8 @@ export class NodeInfoPanel {
       const key = el.dataset.key!;
 
       if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-        el.addEventListener('input', e => { config[key] = (e.target as HTMLInputElement).value; this.scheduleSave(); });
-        el.addEventListener('change', e => { config[key] = (e.target as HTMLInputElement).value; this.scheduleSave(); });
+        el.addEventListener('input', e => { config[key] = (e.target as HTMLInputElement).value; if (this.building) this.applyConfigToBuilding(this.building, config); this.scheduleSave(); this.renderFull(); });
+        el.addEventListener('change', e => { config[key] = (e.target as HTMLInputElement).value; if (this.building) this.applyConfigToBuilding(this.building, config); this.scheduleSave(); this.renderFull(); });
         // Stop canvas from eating keyboard events
         el.addEventListener('keydown', e => e.stopPropagation());
         el.addEventListener('keyup',   e => e.stopPropagation());
@@ -412,6 +428,7 @@ export class NodeInfoPanel {
           btn.textContent   = on ? 'ON' : 'OFF';
           btn.className     = `nip-toggle ${on ? 'nip-toggle--on' : 'nip-toggle--off'}`;
           config[key]       = on ? 'true' : 'false';
+          if (this.building) this.applyConfigToBuilding(this.building, config);
           this.scheduleSave();
         });
       }
@@ -431,7 +448,9 @@ export class NodeInfoPanel {
     const currentSlot = this.element.querySelector('[data-mcp-slot]');
     if (!currentSlot || this.building?.id !== b.id) return;
 
-    const server = this.findMCPServerForType(b.buildingType, servers);
+    const cfg = this.getConfig(b.id);
+    const lookup = cfg.service || b.nodeType || b.buildingType;
+    const server = this.findMCPServerForType(lookup, servers);
 
     if (server && server.connected) {
       const toolNames = server.tools.slice(0, 4).map(t => t.name).join(', ');

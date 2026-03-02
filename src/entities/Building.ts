@@ -1,44 +1,60 @@
 import { Entity } from './Entity';
 import type { Item, ItemType } from './Item';
 
-export type BuildingType =
-  // Coworking furniture
-  | 'desk'           // Personal workstation — Nodelings sit and do focused work
-  | 'meeting_room'   // Group collaboration space
-  | 'whiteboard'     // Brainstorming & planning
-  | 'task_wall'      // Kanban board — connects to Notion/GitHub for tickets
-  | 'break_room'     // Social / recharge area
-  | 'server_rack'    // Compute backbone — heavy processing
-  | 'library'        // Research & reference — look up information
-  | 'coffee_machine'; // Quick energy boost
+export type BuildingType = 'pull' | 'push' | 'think' | 'decide' | 'transform' | 'store' | 'wait';
+export type LegacyBuildingType =
+  | 'desk'
+  | 'meeting_room'
+  | 'whiteboard'
+  | 'task_wall'
+  | 'break_room'
+  | 'server_rack'
+  | 'library'
+  | 'coffee_machine';
 
-/** All buildings can process tasks via LLM — each has a different "vibe" */
-const PROCESSOR_TYPES: BuildingType[] = [
-  'desk', 'meeting_room', 'whiteboard', 'task_wall',
-  'server_rack', 'library',
-];
+const LEGACY_TYPE_MAP: Record<LegacyBuildingType, BuildingType> = {
+  desk: 'think',
+  meeting_room: 'decide',
+  whiteboard: 'transform',
+  task_wall: 'push',
+  break_room: 'wait',
+  server_rack: 'transform',
+  library: 'pull',
+  coffee_machine: 'wait',
+};
 
-/** Buildings that act as output/display (show results) */
-const OUTPUT_TYPES: BuildingType[] = [
-  'task_wall',
-];
+export function normalizeBuildingType(type: string): BuildingType {
+  if (type in LEGACY_TYPE_MAP) return LEGACY_TYPE_MAP[type as LegacyBuildingType];
+  const normalized = type as BuildingType;
+  if (['pull', 'push', 'think', 'decide', 'transform', 'store', 'wait'].includes(normalized)) {
+    return normalized;
+  }
+  return 'think';
+}
 
-/** Processing time (ticks) per building type */
-const PROCESS_TIMES: Partial<Record<BuildingType, number>> = {
-  desk:           90,   // 3 sec — focused work
-  meeting_room:   120,  // 4 sec — collaboration takes time
-  whiteboard:     60,   // 2 sec — quick brainstorm
-  task_wall:      90,   // 3 sec — organizing tasks
-  server_rack:    150,  // 5 sec — heavy compute
-  library:        90,   // 3 sec — research
-  break_room:     45,   // 1.5 sec — quick break
-  coffee_machine: 30,   // 1 sec — grab a coffee
+const PROCESSOR_TYPES: BuildingType[] = ['pull', 'push', 'think', 'decide', 'transform', 'store'];
+const OUTPUT_TYPES: BuildingType[] = ['push', 'store'];
+
+const PROCESS_TIMES: Record<BuildingType, number> = {
+  pull: 90,
+  push: 90,
+  think: 120,
+  decide: 90,
+  transform: 120,
+  store: 60,
+  wait: 45,
 };
 
 export class Building extends Entity {
   buildingType: BuildingType;
+  /** Per-node capability for backend routing; same as buildingType unless overridden. */
+  nodeType: BuildingType;
   /** Overrides the canvas icon; defaults to buildingType when unset */
   iconKey?: string;
+  /** Optional configured display label (e.g. "Pull from Gmail") */
+  displayLabel?: string;
+  /** Per-node config used by /api/process */
+  nodeConfig: Record<string, string> = {};
   /** Items stored in this building */
   inventory: Item[] = [];
   /** Processing state */
@@ -57,20 +73,19 @@ export class Building extends Entity {
   /** Whether we're waiting for an async backend response */
   awaitingAsync = false;
 
-  constructor(buildingType: BuildingType, gx: number, gy: number) {
+  constructor(buildingType: BuildingType | LegacyBuildingType, gx: number, gy: number) {
     super('building', gx, gy);
-    this.buildingType = buildingType;
+    this.buildingType = normalizeBuildingType(buildingType);
+    this.nodeType = this.buildingType;
     this.renderLayer = 1;
-    this.processTime = PROCESS_TIMES[buildingType] ?? 150;
+    this.processTime = PROCESS_TIMES[this.buildingType] ?? 150;
     this.updateWorldPosition();
   }
 
-  /** Whether this building processes tasks */
   isProcessor(): boolean {
     return PROCESSOR_TYPES.includes(this.buildingType);
   }
 
-  /** Whether this building acts as an output display */
   isOutput(): boolean {
     return OUTPUT_TYPES.includes(this.buildingType);
   }
