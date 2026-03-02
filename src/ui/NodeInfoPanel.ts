@@ -21,6 +21,15 @@ interface NodeMeta {
 /** Building types that route through MCP servers for external integrations */
 const MCP_BUILDING_TYPES = ['task_wall'];
 
+
+interface NodeRunStatus {
+  runId: string;
+  status: 'success' | 'error';
+  backend?: string;
+  outputPreview?: string;
+  errorCategory?: string;
+}
+
 interface MCPStatusCache {
   timestamp: number;
   servers: { name: string; connected: boolean; toolCount: number; tools: { name: string; description: string }[] }[];
@@ -147,11 +156,15 @@ export class NodeInfoPanel {
   private mcpCache: MCPStatusCache | null = null;
   /** Save indicator timeout */
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** Latest run status per building */
+  private latestRunByBuilding = new Map<number, NodeRunStatus>();
 
   /** Callback: fired when user adds a task to a building */
   onAddTask: ((building: Building, payload: string) => void) | null = null;
   /** Callback: fired when user clicks "Connect MCP" on an integration building */
   onOpenMCP: (() => void) | null = null;
+  /** Callback: fired when user retries latest failed run */
+  onRetryRun: ((building: Building) => void) | null = null;
 
   constructor(overlay: HTMLElement) {
     this.container = overlay;
@@ -198,6 +211,16 @@ export class NodeInfoPanel {
   getBuildingConfig(id: number): Record<string, string> {
     if (!this.buildingConfigs.has(id)) return {};
     return { ...this.buildingConfigs.get(id)! };
+  }
+
+
+  setLatestRunStatus(buildingId: number, run: NodeRunStatus) {
+    this.latestRunByBuilding.set(buildingId, run);
+    if (this.visible && this.building?.id === buildingId) this.renderFull();
+  }
+
+  getLatestRunStatus(buildingId: number): NodeRunStatus | null {
+    return this.latestRunByBuilding.get(buildingId) ?? null;
   }
 
   private escapeHtml(text: string): string {
@@ -391,6 +414,12 @@ export class NodeInfoPanel {
       }
     });
 
+
+    this.element.querySelector('[data-action="retry-run"]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      if (this.building) this.onRetryRun?.(this.building);
+    });
+
     // Wire all inputs → save to config
     this.element.querySelectorAll<HTMLElement>('[data-key]').forEach(el => {
       const key = el.dataset.key!;
@@ -473,6 +502,21 @@ export class NodeInfoPanel {
   // ── Action buttons per building type ──────────────────────────────────────
 
   private buildActionsHTML(b: Building): string {
+    const latestRun = this.latestRunByBuilding.get(b.id);
+    const latestRunHTML = latestRun
+      ? `<div class="nip-run-status nip-run-status--${latestRun.status}">
+          <div class="nip-run-head">
+            <span>Latest run: <strong>${latestRun.status === 'success' ? 'Success' : 'Error'}</strong></span>
+            <span class="nip-run-backend">${this.escapeHtml(latestRun.backend || 'unknown')}</span>
+          </div>
+          ${latestRun.outputPreview ? `<div class="nip-payload-preview">${this.escapeHtml(latestRun.outputPreview)}</div>` : ''}
+          ${latestRun.status === 'error'
+            ? `<button class="nip-action-btn nip-action-btn--warn" data-action="retry-run">Retry</button>
+               <div class="nip-run-error">${this.escapeHtml(latestRun.errorCategory || 'unknown error')}</div>`
+            : ''}
+        </div>`
+      : '';
+
     if (b.isProcessor()) {
       if (b.processing) {
         const pct = Math.round((b.processTimer / b.processTime) * 100);
@@ -490,11 +534,13 @@ export class NodeInfoPanel {
               <span class="nip-action-hint">Working... ${pct}%</span>
             </div>
             ${payloadPreview}
+            ${latestRunHTML}
           </div>`;
       }
       return `
-        <div class="nip-actions">
+        <div class="nip-actions" style="flex-direction:column;align-items:stretch;">
           <span class="nip-action-hint nip-action-hint--ready">Ready for tasks</span>
+          ${latestRunHTML}
         </div>`;
     }
 
@@ -511,10 +557,11 @@ export class NodeInfoPanel {
         <div class="nip-actions" style="flex-direction:column;align-items:stretch;">
           <span class="nip-action-hint">${results.length} result${results.length !== 1 ? 's' : ''} displayed</span>
           ${previewHTML}
+          ${latestRunHTML}
         </div>`;
     }
 
-    return '';
+    return latestRunHTML;
   }
 
   // ── Field HTML builder ─────────────────────────────────────────────────────
@@ -860,6 +907,41 @@ export class NodeInfoPanel {
       .nip-action-btn--primary:active {
         transform: translateY(0);
         box-shadow: none;
+      }
+
+      .nip-action-btn--warn {
+        background: rgba(251,113,133,0.15);
+        border-color: rgba(251,113,133,0.4);
+        color: #fda4af;
+      }
+      .nip-action-btn--warn:hover {
+        background: rgba(251,113,133,0.25);
+        border-color: rgba(251,113,133,0.55);
+      }
+      .nip-run-status {
+        margin-top: 8px;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px;
+        padding: 8px;
+      }
+      .nip-run-status--success { border-color: rgba(34,197,94,0.35); }
+      .nip-run-status--error { border-color: rgba(251,113,133,0.35); }
+      .nip-run-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: #94a3b8;
+        margin-bottom: 6px;
+      }
+      .nip-run-backend {
+        text-transform: uppercase;
+        font-size: 10px;
+        color: #64748b;
+      }
+      .nip-run-error {
+        margin-top: 6px;
+        font-size: 10px;
+        color: #fda4af;
       }
       .nip-action-hint {
         font-size: 11px;

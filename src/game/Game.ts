@@ -83,6 +83,10 @@ export class Game {
     this.ticketsPage   = new TicketsPage(overlay, this);
     this.nodeInfoPanel = new NodeInfoPanel(overlay);
     this.nodeInfoPanel.onAddTask = (building, payload) => this.addTaskToBuilding(building, payload);
+    this.nodeInfoPanel.onRetryRun = (building) => {
+      if (!building.processingPayload) return;
+      this.addTaskToBuilding(building, building.processingPayload);
+    };
 
     // Handle resize
     window.addEventListener('resize', () => this.resize());
@@ -510,21 +514,68 @@ export class Game {
       const res = await apiFetch('/api/process', {
         method: 'POST',
         body: JSON.stringify({
+          nodeId: building.id,
           buildingType: building.buildingType,
           inputPayload: payload,
           buildingConfig: config,
         }),
         signal: AbortSignal.timeout(90_000),
       });
+      const data = await res.json() as {
+        runId?: string;
+        outputPayload?: string;
+        error?: string;
+        errorCategory?: string;
+        metadata?: Record<string, any>;
+      };
+
+      const status = res.ok ? 'success' : 'error';
+      this.nodeInfoPanel.setLatestRunStatus(building.id, {
+        runId: data.runId || 'unknown',
+        status,
+        backend: data.metadata?.backend,
+        outputPreview: (data.outputPayload || data.error || '').slice(0, 120),
+        errorCategory: data.errorCategory,
+      });
+
       if (res.ok) {
-        const data = await res.json() as { outputPayload: string; metadata?: Record<string, any> };
         building.completeAsync(data.outputPayload || '', data.metadata);
         return;
       }
+
+      const errorPayload = data.outputPayload || JSON.stringify({
+        type: 'processing_error',
+        category: data.errorCategory || 'unknown',
+        message: data.error || 'Processing failed',
+        runId: data.runId || null,
+        nodeId: building.id,
+        buildingType: building.buildingType,
+      });
+      building.completeAsync(errorPayload, {
+        ...(data.metadata || {}),
+        runId: data.runId,
+        status: 'error',
+        errorCategory: data.errorCategory || 'unknown',
+      });
+      return;
     } catch (err) {
       console.error('[processBuilding] Backend call failed:', err);
     }
 
-    building.completeAsync(`[Processed] ${payload}`);
+    const fallbackErrorPayload = JSON.stringify({
+      type: 'processing_error',
+      category: 'network',
+      message: 'Backend call failed',
+      nodeId: building.id,
+      buildingType: building.buildingType,
+    });
+    this.nodeInfoPanel.setLatestRunStatus(building.id, {
+      runId: 'network-failure',
+      status: 'error',
+      backend: 'unknown',
+      outputPreview: 'Backend call failed',
+      errorCategory: 'network',
+    });
+    building.completeAsync(fallbackErrorPayload, { status: 'error', errorCategory: 'network' });
   }
 }
