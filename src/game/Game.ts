@@ -43,14 +43,13 @@ export class Game {
 
   /** Accent colors for coworking furniture */
   private readonly BUILDING_ACCENT: Record<string, string> = {
-    desk:           '#4ecdc4',
-    meeting_room:   '#8b5cf6',
-    whiteboard:     '#f59e0b',
-    task_wall:      '#3b82f6',
-    break_room:     '#ec4899',
-    server_rack:    '#10b981',
-    library:        '#6366f1',
-    coffee_machine: '#d97706',
+    pull:      '#22c55e',
+    push:      '#3b82f6',
+    think:     '#8b5cf6',
+    decide:    '#f59e0b',
+    transform: '#14b8a6',
+    store:     '#6366f1',
+    wait:      '#ec4899',
   };
 
   private lastTime = 0;
@@ -407,13 +406,14 @@ export class Game {
 
   /** Duration a nodeling pauses at a given building type */
   private getBuildingWorkDuration(b: Building): number {
-    switch (b.buildingType) {
-      case 'server_rack':
-      case 'meeting_room':  return 90;
-      case 'desk':
-      case 'library':       return 60;
-      case 'whiteboard':    return 45;
-      default:              return 30;
+    switch (b.nodeType ?? b.buildingType) {
+      case 'transform':
+      case 'think': return 90;
+      case 'pull':
+      case 'push':
+      case 'decide': return 60;
+      case 'store': return 45;
+      default: return 30;
     }
   }
 
@@ -441,7 +441,7 @@ export class Game {
             n.nodeWorkDuration = this.getBuildingWorkDuration(building);
             n.atNodeX = building.gridX;
             n.atNodeY = building.gridY;
-            n.domeColor = this.BUILDING_ACCENT[building.buildingType] ?? '#4ecdc4';
+            n.domeColor = this.BUILDING_ACCENT[building.nodeType ?? building.buildingType] ?? '#4ecdc4';
             n.setState('at_node');
             this.nodelingAtBuilding.set(n.id, building);
           }
@@ -504,15 +504,16 @@ export class Game {
   /** Send building work to backend */
   private async processBuilding(building: Building) {
     const config = this.nodeInfoPanel.getBuildingConfig(building.id);
+    building.nodeConfig = { ...config };
     const payload = building.processingPayload;
 
     try {
       const res = await apiFetch('/api/process', {
         method: 'POST',
         body: JSON.stringify({
-          buildingType: building.buildingType,
+          nodeType: building.nodeType ?? building.buildingType,
+          nodeConfig: config,
           inputPayload: payload,
-          buildingConfig: config,
         }),
         signal: AbortSignal.timeout(90_000),
       });
