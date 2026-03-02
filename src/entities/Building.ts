@@ -57,8 +57,8 @@ export class Building extends Entity {
   /** Whether we're waiting for an async backend response */
   awaitingAsync = false;
 
-  constructor(buildingType: BuildingType, gx: number, gy: number) {
-    super('building', gx, gy);
+  constructor(buildingType: BuildingType, gx: number, gy: number, id?: number) {
+    super('building', gx, gy, id);
     this.buildingType = buildingType;
     this.renderLayer = 1;
     this.processTime = PROCESS_TIMES[buildingType] ?? 150;

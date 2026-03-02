@@ -18,8 +18,8 @@ export class Item extends Entity {
   /** Extra context (model used, token counts, etc.) */
   metadata: Record<string, any> = {};
 
-  constructor(itemType: ItemType, gx: number, gy: number) {
-    super('item', gx, gy);
+  constructor(itemType: ItemType, gx: number, gy: number, id?: number) {
+    super('item', gx, gy, id);
     this.itemType = itemType;
     this.renderLayer = 0;
     this.updateWorldPosition();

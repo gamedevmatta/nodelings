@@ -1,12 +1,14 @@
 import { Entity } from '../entities/Entity';
 import { Building, type BuildingType } from '../entities/Building';
-import { Item, type ItemType } from '../entities/Item';
+import { Item } from '../entities/Item';
 import { Nodeling } from '../entities/Nodeling';
+import type { PresenceState, RoomSnapshot } from '../shared/realtime';
 
 export class World {
   entities: Entity[] = [];
   gridWidth = 12;
   gridHeight = 12;
+  presence: PresenceState[] = [];
   /** Callback for when a result is produced */
   onResultProduced: (() => void) | null = null;
 
@@ -45,6 +47,14 @@ export class World {
     return this.buildingMap.get(`${gx},${gy}`) ?? null;
   }
 
+  getBuildingById(id: number): Building | null {
+    return this.getBuildings().find((b) => b.id === id) ?? null;
+  }
+
+  getNodelingById(id: number): Nodeling | null {
+    return this.getNodelings().find((n) => n.id === id) ?? null;
+  }
+
   /** Returns the first building in a 4-cardinal adjacent tile, or null */
   getAdjacentBuilding(gx: number, gy: number): Building | null {
     const dirs = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
@@ -74,88 +84,6 @@ export class World {
     return true;
   }
 
-  /** A* pathfinding */
-  findPath(fromX: number, fromY: number, toX: number, toY: number): { x: number; y: number }[] {
-    // If target is a building, find adjacent walkable cell
-    if (!this.isWalkable(toX, toY)) {
-      const adj = this.getAdjacentWalkable(toX, toY);
-      if (adj) {
-        toX = adj.x;
-        toY = adj.y;
-      } else {
-        return [];
-      }
-    }
-
-    const key = (x: number, y: number) => `${x},${y}`;
-    const open: { x: number; y: number; g: number; f: number }[] = [];
-    const closed = new Set<string>();
-    const cameFrom = new Map<string, { x: number; y: number }>();
-    const gScore = new Map<string, number>();
-
-    const start = { x: fromX, y: fromY, g: 0, f: this.heuristic(fromX, fromY, toX, toY) };
-    open.push(start);
-    gScore.set(key(fromX, fromY), 0);
-
-    const dirs = [
-      { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
-      { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
-    ];
-
-    let _iters = 0;
-    while (open.length > 0 && ++_iters < 2000) {
-      open.sort((a, b) => a.f - b.f);
-      const current = open.shift()!;
-      const ck = key(current.x, current.y);
-
-      if (current.x === toX && current.y === toY) {
-        // Reconstruct path
-        const path: { x: number; y: number }[] = [];
-        let cur = key(toX, toY);
-        while (cameFrom.has(cur)) {
-          const [px, py] = cur.split(',').map(Number);
-          path.unshift({ x: px, y: py });
-          const prev = cameFrom.get(cur)!;
-          cur = key(prev.x, prev.y);
-        }
-        return path;
-      }
-
-      closed.add(ck);
-
-      for (const dir of dirs) {
-        const nx = current.x + dir.x;
-        const ny = current.y + dir.y;
-        const nk = key(nx, ny);
-
-        if (closed.has(nk) || !this.isWalkable(nx, ny)) continue;
-
-        // Diagonal cost
-        const moveCost = (dir.x !== 0 && dir.y !== 0) ? 1.414 : 1;
-        const tentG = current.g + moveCost;
-        const prevG = gScore.get(nk) ?? Infinity;
-
-        if (tentG < prevG) {
-          cameFrom.set(nk, { x: current.x, y: current.y });
-          gScore.set(nk, tentG);
-          const f = tentG + this.heuristic(nx, ny, toX, toY);
-          const existing = open.find(n => n.x === nx && n.y === ny);
-          if (existing) {
-            existing.g = tentG;
-            existing.f = f;
-          } else {
-            open.push({ x: nx, y: ny, g: tentG, f });
-          }
-        }
-      }
-    }
-
-    return []; // No path found
-  }
-
-  private heuristic(ax: number, ay: number, bx: number, by: number): number {
-    return Math.abs(ax - bx) + Math.abs(ay - by);
-  }
 
   getAdjacentWalkable(gx: number, gy: number): { x: number; y: number } | null {
     const dirs = [
@@ -169,35 +97,82 @@ export class World {
     return null;
   }
 
-  /** Tick all entities */
-  tick() {
-    for (const entity of this.entities) {
-      if (entity instanceof Building) entity.tick();
-      if (entity instanceof Nodeling) entity.tick();
+  applySnapshot(snapshot: RoomSnapshot) {
+    this.presence = snapshot.presence;
+
+    const previousResultIds = new Set(this.getItems().filter((item) => item.itemType === 'result').map((item) => item.id));
+    const byId = new Map(this.entities.map((entity) => [entity.id, entity]));
+    const next: Entity[] = [];
+
+    for (const b of snapshot.world.buildings) {
+      const existing = byId.get(b.id);
+      const entity = existing instanceof Building ? existing : new Building(b.buildingType, b.gridX, b.gridY, b.id);
+      entity.gridX = b.gridX;
+      entity.gridY = b.gridY;
+      entity.buildingType = b.buildingType;
+      entity.processing = b.processing;
+      entity.processTimer = b.processTimer;
+      entity.awaitingAsync = b.awaitingAsync;
+      entity.processingPayload = b.processingPayload;
+      entity.resultPayload = b.resultPayload;
+      entity.resultMetadata = b.resultMetadata;
+      entity.updateWorldPosition();
+      next.push(entity);
     }
 
-    // Clean up removed entities
-    for (let i = this.entities.length - 1; i >= 0; i--) {
-      if (this.entities[i].removed) {
-        this.entities.splice(i, 1);
-      }
+    for (const n of snapshot.world.nodelings) {
+      const existing = byId.get(n.id);
+      const entity = existing instanceof Nodeling ? existing : new Nodeling(n.name, n.gridX, n.gridY, n.id);
+      entity.name = n.name;
+      entity.role = n.role;
+      entity.gridX = n.gridX;
+      entity.gridY = n.gridY;
+      entity.state = n.state;
+      entity.updateWorldPosition();
+      entity.interpX = entity.worldX;
+      entity.interpY = entity.worldY;
+      next.push(entity);
+    }
+
+    const items: Item[] = [];
+    for (const i of snapshot.world.items) {
+      const existing = byId.get(i.id);
+      const entity = existing instanceof Item ? existing : new Item(i.itemType, i.gridX, i.gridY, i.id);
+      entity.itemType = i.itemType;
+      entity.gridX = i.gridX;
+      entity.gridY = i.gridY;
+      entity.payload = i.payload;
+      entity.metadata = i.metadata;
+      entity.storedIn = i.storedIn;
+      entity.carried = i.carried;
+      entity.updateWorldPosition();
+      items.push(entity);
+      next.push(entity);
+    }
+
+    for (const building of next.filter((entity): entity is Building => entity instanceof Building)) {
+      building.inventory = items.filter((item) => item.storedIn === building.id);
+    }
+
+    Entity.ensureNextIdAtLeast(snapshot.world.nextEntityId);
+
+    this.entities = next;
+    this.buildingMap.clear();
+    for (const b of this.getBuildings()) {
+      this.buildingMap.set(`${b.gridX},${b.gridY}`, b);
+    }
+
+    const hasNewResult = this.getItems().some((item) => item.itemType === 'result' && !previousResultIds.has(item.id));
+    if (hasNewResult) this.onResultProduced?.();
+  }
+
+  tick() {
+    for (const entity of this.entities) {
+      if (entity instanceof Nodeling) entity.tick();
     }
   }
 
-  /** Create the starting coworking space layout */
   static createWorkspace(): World {
-    const world = new World();
-
-    // Place some starter furniture
-    world.addEntity(new Building('desk', 3, 3));
-    world.addEntity(new Building('whiteboard', 5, 2));
-    world.addEntity(new Building('coffee_machine', 8, 3));
-
-    // Your first Nodeling coworker
-    const nodeling1 = new Nodeling('Sparky', 6, 5);
-    nodeling1.role = 'Creative Lead';
-    world.addEntity(nodeling1);
-
-    return world;
+    return new World();
   }
 }
