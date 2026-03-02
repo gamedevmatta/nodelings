@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { MCPHub } from './mcp-hub.js';
 import { createSession, sessionExists, setKeys, getKey, getKeyStatus } from './session-store.js';
@@ -202,9 +203,84 @@ app.post('/api/mcp/call', async (req, res) => {
 // ── /api/process — coworking furniture processing ───────────────────────────
 
 interface ProcessRequest {
+  nodeId?: number | string;
   buildingType: string;
   inputPayload: string;
   buildingConfig: Record<string, string>;
+}
+
+type RunStatus = 'success' | 'error';
+type ErrorCategory = 'llm_transient' | 'mcp_transient' | 'rate_limit' | 'timeout' | 'validation' | 'auth' | 'unknown';
+
+interface RunEvent {
+  timestamp: string;
+  type: 'attempt' | 'success' | 'error';
+  requestId: string;
+  runId: string;
+  nodeId?: string;
+  buildingType: string;
+  backend: 'anthropic' | 'gemini' | null;
+  latencyMs: number;
+  tokenUsage?: { input: number; output: number };
+  toolUsage?: { calls: number };
+  errorCategory?: ErrorCategory;
+  message?: string;
+}
+
+interface RunDiagnostics {
+  runId: string;
+  requestId: string;
+  nodeId?: string;
+  buildingType: string;
+  backend: 'anthropic' | 'gemini' | null;
+  status: RunStatus;
+  createdAt: string;
+  latencyMs: number;
+  attempts: number;
+  tokenUsage?: { input: number; output: number };
+  toolUsage?: { calls: number };
+  errorCategory?: ErrorCategory;
+  errorMessage?: string;
+  outputPreview?: string;
+  events: RunEvent[];
+}
+
+const runDiagnosticsStore = new Map<string, RunDiagnostics>();
+
+function classifyError(err: unknown): ErrorCategory {
+  const msg = String((err as any)?.message ?? err ?? '').toLowerCase();
+  if (/mcp|tool|server disconnected|broken pipe|econnreset/.test(msg)) return 'mcp_transient';
+  if (/rate limit|429|too many requests|quota/.test(msg)) return 'rate_limit';
+  if (/timeout|timed out|abort/.test(msg)) return 'timeout';
+  if (/api key|unauthorized|forbidden|401|403/.test(msg)) return 'auth';
+  if (/network|temporary|unavailable|overloaded|5\d\d/.test(msg)) return 'llm_transient';
+  return 'unknown';
+}
+
+function isTransient(category: ErrorCategory): boolean {
+  return category === 'llm_transient' || category === 'mcp_transient' || category === 'rate_limit' || category === 'timeout';
+}
+
+async function withRetry<T>(op: (attempt: number) => Promise<T>, maxAttempts = 3): Promise<{ value: T; attempts: number }> {
+  let attempt = 0;
+  let backoffMs = 400;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      const value = await op(attempt);
+      return { value, attempts: attempt };
+    } catch (err) {
+      const category = classifyError(err);
+      if (!isTransient(category) || attempt >= maxAttempts) throw err;
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+      backoffMs *= 2;
+    }
+  }
+  throw new Error('Retry policy exhausted');
+}
+
+function emitRunEvent(evt: RunEvent) {
+  console.log('[execution-event]', JSON.stringify(evt));
 }
 
 
@@ -259,10 +335,30 @@ const ALLOWED_BUILDING_TYPES = new Set([
 ]);
 
 app.post('/api/process', async (req, res) => {
-  const { buildingType, inputPayload, buildingConfig }: ProcessRequest = req.body;
+  const { nodeId, buildingType, inputPayload, buildingConfig }: ProcessRequest = req.body;
+  const requestId = randomUUID();
+  const runId = randomUUID();
+  const nodeRef = nodeId !== undefined ? String(nodeId) : undefined;
 
   if (!buildingType || !ALLOWED_BUILDING_TYPES.has(buildingType)) {
-    res.status(400).json({ error: `Invalid building type: ${String(buildingType).slice(0, 50)}` });
+    const errorMessage = `Invalid building type: ${String(buildingType).slice(0, 50)}`;
+    const diagnostics: RunDiagnostics = {
+      runId,
+      requestId,
+      nodeId: nodeRef,
+      buildingType,
+      backend: null,
+      status: 'error',
+      createdAt: new Date().toISOString(),
+      latencyMs: 0,
+      attempts: 0,
+      errorCategory: 'validation',
+      errorMessage,
+      outputPreview: '',
+      events: [],
+    };
+    runDiagnosticsStore.set(runId, diagnostics);
+    res.status(400).json({ runId, error: errorMessage, errorCategory: 'validation' });
     return;
   }
 
@@ -290,29 +386,183 @@ app.post('/api/process', async (req, res) => {
 
     const systemPrompt = furniturePrompts[buildingType] || 'Process the following:';
     const backend = getBackend(sessionId);
+    const runStart = Date.now();
+    const events: RunEvent[] = [];
+    let tokenUsage: { input: number; output: number } | undefined;
+    const toolUsage = { calls: 0 };
 
-    if (backend === 'anthropic') {
-      const apiKey = getKey(sessionId, 'anthropicKey') || process.env.ANTHROPIC_API_KEY || '';
-      const client = apiKey === process.env.ANTHROPIC_API_KEY ? anthropic : new Anthropic({ apiKey });
-      const msg = await client.messages.create({
-        model: buildingConfig?.model || 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: inputPayload }],
-      });
-      const text = (msg.content[0] as any).text || '';
-      result = { outputPayload: text, metadata: { buildingType, model: 'claude-sonnet-4-20250514' } };
-    } else {
+    const execution = await withRetry(async (attempt) => {
+      const attemptStart = Date.now();
+      if (backend === 'anthropic') {
+        const apiKey = getKey(sessionId, 'anthropicKey') || process.env.ANTHROPIC_API_KEY || '';
+        const client = apiKey === process.env.ANTHROPIC_API_KEY ? anthropic : new Anthropic({ apiKey });
+        const msg = await client.messages.create({
+          model: buildingConfig?.model || 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: inputPayload }],
+        });
+        tokenUsage = {
+          input: msg.usage?.input_tokens || 0,
+          output: msg.usage?.output_tokens || 0,
+        };
+        const text = (msg.content[0] as any).text || '';
+        const evt: RunEvent = {
+          timestamp: new Date().toISOString(),
+          type: 'attempt',
+          requestId,
+          runId,
+          nodeId: nodeRef,
+          buildingType,
+          backend,
+          latencyMs: Date.now() - attemptStart,
+          tokenUsage,
+          toolUsage,
+          message: `attempt ${attempt} succeeded`,
+        };
+        events.push(evt);
+        emitRunEvent(evt);
+        return { text, model: buildingConfig?.model || 'claude-sonnet-4-20250514' };
+      }
+
       const apiKey = getKey(sessionId, 'geminiKey') || GEMINI_API_KEY;
       const gemResult = await callGemini('gemini-2.0-flash', systemPrompt, inputPayload, 1024, apiKey);
-      result = { outputPayload: gemResult.text, metadata: { buildingType, model: 'gemini-2.0-flash' } };
-    }
+      tokenUsage = gemResult.usage;
+      const evt: RunEvent = {
+        timestamp: new Date().toISOString(),
+        type: 'attempt',
+        requestId,
+        runId,
+        nodeId: nodeRef,
+        buildingType,
+        backend,
+        latencyMs: Date.now() - attemptStart,
+        tokenUsage,
+        toolUsage,
+        message: `attempt ${attempt} succeeded`,
+      };
+      events.push(evt);
+      emitRunEvent(evt);
+      return { text: gemResult.text, model: 'gemini-2.0-flash' };
+    }, 3);
 
-    res.json(result);
+    result = {
+      outputPayload: execution.value.text,
+      metadata: {
+        buildingType,
+        model: execution.value.model,
+        runId,
+        requestId,
+        nodeId: nodeRef,
+        backend,
+        status: 'success',
+        attempts: execution.attempts,
+        tokenUsage,
+        toolUsage,
+      },
+    };
+
+    const successEvent: RunEvent = {
+      timestamp: new Date().toISOString(),
+      type: 'success',
+      requestId,
+      runId,
+      nodeId: nodeRef,
+      buildingType,
+      backend,
+      latencyMs: Date.now() - runStart,
+      tokenUsage,
+      toolUsage,
+      message: 'run completed',
+    };
+    events.push(successEvent);
+    emitRunEvent(successEvent);
+    runDiagnosticsStore.set(runId, {
+      runId,
+      requestId,
+      nodeId: nodeRef,
+      buildingType,
+      backend,
+      status: 'success',
+      createdAt: new Date().toISOString(),
+      latencyMs: Date.now() - runStart,
+      attempts: execution.attempts,
+      tokenUsage,
+      toolUsage,
+      outputPreview: result.outputPayload.slice(0, 160),
+      events,
+    });
+
+    res.json({ ...result, runId });
   } catch (err: any) {
+    const backend = getBackend(sessionId);
+    const errorCategory = classifyError(err);
+    const errorMessage = err?.message ?? 'Processing failed';
+    const event: RunEvent = {
+      timestamp: new Date().toISOString(),
+      type: 'error',
+      requestId,
+      runId,
+      nodeId: nodeRef,
+      buildingType,
+      backend,
+      latencyMs: 0,
+      toolUsage: { calls: 0 },
+      errorCategory,
+      message: errorMessage,
+    };
+    emitRunEvent(event);
+    runDiagnosticsStore.set(runId, {
+      runId,
+      requestId,
+      nodeId: nodeRef,
+      buildingType,
+      backend,
+      status: 'error',
+      createdAt: new Date().toISOString(),
+      latencyMs: 0,
+      attempts: 3,
+      errorCategory,
+      errorMessage,
+      toolUsage: { calls: 0 },
+      outputPreview: '',
+      events: [event],
+    });
     console.error(`[/api/process] error:`, err?.message ?? err);
-    res.status(500).json({ error: err?.message ?? 'Processing failed' });
+    res.status(500).json({
+      runId,
+      error: errorMessage,
+      errorCategory,
+      outputPayload: JSON.stringify({
+        type: 'processing_error',
+        category: errorCategory,
+        runId,
+        requestId,
+        buildingType,
+        nodeId: nodeRef,
+        retryable: isTransient(errorCategory),
+        message: errorMessage,
+      }),
+      metadata: {
+        runId,
+        requestId,
+        nodeId: nodeRef,
+        buildingType,
+        backend,
+        status: 'error',
+        errorCategory,
+      },
+    });
   }
+});
+
+app.get('/api/runs/:id', (req, res) => {
+  const run = runDiagnosticsStore.get(req.params.id);
+  if (!run) {
+    res.status(404).json({ error: 'Run not found' });
+    return;
+  }
+  res.json(run);
 });
 
 
