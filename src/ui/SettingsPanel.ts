@@ -159,7 +159,6 @@ export class SettingsPanel {
     this.llm = llm;
     this.element = document.createElement('div');
     this.element.className = 'up-panel';
-    this.element.style.display = 'none';
     this.applyStyles();
     this.buildHTML();
     this.container.appendChild(this.element);
@@ -172,13 +171,13 @@ export class SettingsPanel {
 
   show() {
     this.visible = true;
-    this.element.style.display = 'flex';
+    this.element.classList.add('up-visible');
     this.refreshAll();
   }
 
   hide() {
     this.visible = false;
-    this.element.style.display = 'none';
+    this.element.classList.remove('up-visible');
   }
 
   scrollToIntegrations() {
@@ -667,17 +666,12 @@ export class SettingsPanel {
     const style = document.createElement('style');
     style.id = 'up-styles';
     style.textContent = `
-      @keyframes up-appear {
-        from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
-        to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-      }
-
       /* ── Panel shell ─────────────────────────────────────────────────── */
       .up-panel {
         position: absolute;
         top: 50%;
         left: 50%;
-        transform: translate(-50%, -50%);
+        transform: translate(-50%, -50%) scale(0.96);
         width: min(680px, calc(100vw - 24px));
         max-height: calc(100vh - 48px);
         background: rgba(10,12,20,0.96);
@@ -693,8 +687,24 @@ export class SettingsPanel {
         font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
         color: #e2e8f0;
         z-index: 101;
-        animation: up-appear 0.22s cubic-bezier(0.16, 1, 0.3, 1);
         box-sizing: border-box;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition:
+          opacity 0.25s ease,
+          transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+          visibility 0s linear 0.3s;
+      }
+      .up-panel.up-visible {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transform: translate(-50%, -50%) scale(1);
+        transition:
+          opacity 0.25s ease,
+          transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+          visibility 0s linear 0s;
       }
 
       /* ── Header ──────────────────────────────────────────────────────── */

@@ -29,7 +29,6 @@ export class TicketsPage {
 
     this.element = document.createElement('div');
     this.element.className = 'tickets-page';
-    this.element.style.display = 'none';
 
     this.applyStyles();
     this.buildDOM();
@@ -148,13 +147,13 @@ export class TicketsPage {
   // ─────────────────────────────────────────────────────────────────────────
   show() {
     this.visible = true;
-    this.element.style.display = 'flex';
+    this.element.classList.add('tp-visible');
     this.render();
   }
 
   hide() {
     this.visible = false;
-    this.element.style.display = 'none';
+    this.element.classList.remove('tp-visible');
   }
 
   update() {
@@ -435,6 +434,28 @@ export class TicketsPage {
         z-index: 30;
         font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
         color: #e2e8f0;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition:
+          opacity 0.25s ease,
+          visibility 0s linear 0.25s;
+      }
+      .tickets-page.tp-visible {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition:
+          opacity 0.25s ease,
+          visibility 0s linear 0s;
+      }
+      .tickets-page.tp-visible .tp-header,
+      .tickets-page.tp-visible .tp-body {
+        animation: tp-content-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes tp-content-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
       }
 
       /* ═══════════════════════════════════════════════════
@@ -618,13 +639,14 @@ export class TicketsPage {
       }
       .tp-card:hover {
         border-color: rgba(255,255,255,0.1);
-        box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+        box-shadow: 0 2px 16px rgba(0,0,0,0.3), 0 0 20px rgba(78,205,196,0.04);
       }
       .tp-card-needs-input {
         border-color: rgba(239,68,68,0.2);
         background: rgba(239,68,68,0.025);
       }
-      .tp-card-working { border-color: rgba(78,205,196,0.12); }
+      .tp-card-working { border-color: rgba(78,205,196,0.12); transition: border-color 0.2s, box-shadow 0.2s; }
+      .tp-card-working:hover { box-shadow: 0 2px 16px rgba(0,0,0,0.3), 0 0 20px rgba(78,205,196,0.08); }
       .tp-card-idle    { border-color: rgba(78,205,196,0.08); background: rgba(78,205,196,0.015); }
 
       .tp-card-accent-bar {

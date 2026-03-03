@@ -235,6 +235,10 @@ export class PromptPanel {
       }
       .pp-messages::-webkit-scrollbar { width: 4px; }
       .pp-messages::-webkit-scrollbar-thumb { background: rgba(78,205,196,0.15); border-radius: 4px; }
+      @keyframes pp-msg-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
       .pp-msg {
         padding: 8px 12px;
         border-radius: 14px;
@@ -242,6 +246,7 @@ export class PromptPanel {
         line-height: 1.45;
         max-width: 85%;
         word-wrap: break-word;
+        animation: pp-msg-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       }
       .pp-msg-sparky {
         align-self: flex-start;
@@ -301,12 +306,23 @@ export class PromptPanel {
       }
       .pp-submit:active { transform: translateY(0); }
       .pp-submit:disabled { opacity: 0.4; cursor: default; transform: none; box-shadow: none; }
+      @keyframes pp-thinking-bg {
+        0%   { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+      }
       .pp-status {
         font-size: 11px;
         color: #64748b;
         min-height: 14px;
       }
-      .pp-status.thinking { color: #f7dc6f; }
+      .pp-status.thinking {
+        color: #f7dc6f;
+        background: linear-gradient(90deg, rgba(247,220,111,0.06), rgba(247,220,111,0.14), rgba(247,220,111,0.06));
+        background-size: 200% 100%;
+        animation: pp-thinking-bg 1.8s ease infinite;
+        border-radius: 8px;
+        padding: 4px 10px;
+      }
       .pp-status.error { color: #f87171; }
     `;
     document.head.appendChild(style);

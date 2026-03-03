@@ -12,7 +12,6 @@ export class TasksPanel {
 
     this.element = document.createElement('div');
     this.element.className = 'tasks-panel';
-    this.element.style.display = 'none';
 
     this.applyStyles();
     this.container.appendChild(this.element);
@@ -25,13 +24,13 @@ export class TasksPanel {
 
   show() {
     this.visible = true;
-    this.element.style.display = 'flex';
+    this.element.classList.add('tasks-visible');
     this.refresh();
   }
 
   hide() {
     this.visible = false;
-    this.element.style.display = 'none';
+    this.element.classList.remove('tasks-visible');
   }
 
   update() {
@@ -107,6 +106,24 @@ export class TasksPanel {
         font-family: 'Outfit', 'Segoe UI', system-ui, sans-serif;
         color: #e2e8f0;
         z-index: 100;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transform: translateX(20px);
+        transition:
+          opacity 0.25s ease,
+          transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+          visibility 0s linear 0.3s;
+      }
+      .tasks-panel.tasks-visible {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transform: translateX(0);
+        transition:
+          opacity 0.25s ease,
+          transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+          visibility 0s linear 0s;
       }
       .tasks-header {
         display: flex;
@@ -122,7 +139,8 @@ export class TasksPanel {
       .tasks-close:hover { color: #e2e8f0; }
       .tasks-empty { display: flex; align-items: center; justify-content: center; padding: 40px 20px; color: #334155; font-size: 13px; }
       .tasks-list { overflow-y: auto; flex: 1; }
-      .task-card { padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+      .task-card { padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s ease; }
+      .task-card:hover { background: rgba(255,255,255,0.02); }
       .task-card:last-child { border-bottom: none; }
       .task-card-header { display: flex; align-items: center; gap: 8px; }
       .task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }

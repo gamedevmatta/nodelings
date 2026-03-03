@@ -147,6 +147,10 @@ export class HUD {
         gap: 8px;
       }
 
+      @keyframes hud-pill-in {
+        from { opacity: 0; transform: translateY(-14px) scale(0.96); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+      }
       /* ── Top pill: logo + buttons ── */
       .hud-pill {
         display: flex;
@@ -160,6 +164,7 @@ export class HUD {
         padding: 15px 15px 15px 36px;
         pointer-events: auto;
         box-shadow: 0 6px 42px rgba(0,0,0,0.5), 0 0 30px rgba(78,205,196,0.03);
+        animation: hud-pill-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
       }
       .hud-title {
         font-family: 'Bungee', 'Segoe UI', system-ui, sans-serif;
@@ -169,6 +174,11 @@ export class HUD {
         letter-spacing: 4.5px;
         white-space: nowrap;
         margin-right: 9px;
+        text-shadow: 0 0 30px rgba(78,205,196,0.15);
+        transition: text-shadow 0.3s ease;
+      }
+      .hud-title:hover {
+        text-shadow: 0 0 40px rgba(78,205,196,0.35), 0 0 80px rgba(78,205,196,0.1);
       }
       .hud-divider {
         width: 1.5px;
@@ -188,7 +198,7 @@ export class HUD {
         color: #4a5568;
         cursor: pointer;
         border-radius: 999px;
-        transition: color 0.15s, background 0.15s;
+        transition: color 0.15s, background 0.15s, transform 0.1s;
         flex-shrink: 0;
       }
       .hud-nav-btn svg {
@@ -198,6 +208,9 @@ export class HUD {
       .hud-nav-btn:hover {
         color: #94a3b8;
         background: rgba(255,255,255,0.05);
+      }
+      .hud-nav-btn:active {
+        transform: scale(0.9);
       }
       .hud-nav-btn.active {
         color: #4ecdc4;

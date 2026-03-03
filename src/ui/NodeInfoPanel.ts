@@ -616,7 +616,7 @@ export class NodeInfoPanel {
     style.id = 'nip-styles';
     style.textContent = `
       @keyframes nip-appear {
-        from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.97); }
+        from { opacity: 0; transform: translateX(-50%) translateY(12px) scale(0.95); }
         to   { opacity: 1; transform: translateX(-50%) translateY(0)    scale(1); }
       }
       @keyframes nip-pulse {
@@ -644,7 +644,7 @@ export class NodeInfoPanel {
         color: #e2e8f0;
         box-sizing: border-box;
         z-index: 34;
-        animation: nip-appear 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        animation: nip-appear 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
       }
 
       /* ── Header ── */
@@ -720,7 +720,9 @@ export class NodeInfoPanel {
         border-color: rgba(255,255,255,0.2);
       }
       .nip-icon-btn--active {
-        background: rgba(255,255,255,0.08);
+        background: rgba(78,205,196,0.15);
+        border-color: rgba(78,205,196,0.3);
+        box-shadow: 0 0 8px rgba(78,205,196,0.1);
       }
 
       /* ── Inputs section ── */
@@ -858,7 +860,7 @@ export class NodeInfoPanel {
         box-shadow: 0 4px 12px rgba(59,130,246,0.15);
       }
       .nip-action-btn--primary:active {
-        transform: translateY(0);
+        transform: translateY(0) scale(0.97);
         box-shadow: none;
       }
       .nip-action-hint {
