@@ -30,10 +30,10 @@ function sleep(ms) {
 // Wrap global fetch with rate-limit retry logic
 const _origFetch = globalThis.fetch;
 globalThis.fetch = async function rateLimitedFetch(url, options) {
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     const res = await _origFetch(url, options);
     if (res.status !== 429) return res;
-    const waitMs = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s, 16s
+    const waitMs = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s, 16s, 32s
     console.log(`    (rate limited, waiting ${waitMs / 1000}s...)`);
     await sleep(waitMs);
   }
@@ -48,7 +48,7 @@ async function createSession() {
 
 /** Pause between sections to stay under the rate limit */
 async function sectionPause() {
-  await sleep(4000);
+  await sleep(6000);
 }
 
 /**
@@ -246,6 +246,8 @@ async function run() {
     body: JSON.stringify({ context: 'Test' }),
   });
   assert('chat missing prompt → 400', chatNoPrompt.status === 400, `got ${chatNoPrompt.status}`);
+
+  await sleep(2500);
 
   // Empty prompt → 400
   const chatEmptyPrompt = await fetch(`${BASE}/api/chat`, {
