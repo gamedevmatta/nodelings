@@ -25,24 +25,30 @@ export interface MCPServerStatus {
   config: MCPServerConfig;
 }
 
-const CONFIG_PATH = resolve(process.cwd(), 'mcp-servers.json');
+const DEFAULT_CONFIG_PATH = resolve(process.cwd(), 'mcp-servers.json');
 const IS_WINDOWS = process.platform === 'win32';
+
+interface MCPHubOptions {
+  configPath?: string | null;
+}
 
 export class MCPHub {
   private clients = new Map<string, Client>();
   private transports = new Map<string, StdioClientTransport>();
   private toolCache = new Map<string, MCPToolInfo[]>();
   private configs = new Map<string, MCPServerConfig>();
+  private readonly configPath: string | null;
 
-  constructor() {
+  constructor(options: MCPHubOptions = {}) {
+    this.configPath = options.configPath === undefined ? DEFAULT_CONFIG_PATH : options.configPath;
     this.loadConfig();
   }
 
   /** Load saved server configurations from disk */
   private loadConfig() {
-    if (!existsSync(CONFIG_PATH)) return;
+    if (!this.configPath || !existsSync(this.configPath)) return;
     try {
-      const raw = readFileSync(CONFIG_PATH, 'utf-8');
+      const raw = readFileSync(this.configPath, 'utf-8');
       const data = JSON.parse(raw);
       if (data.servers) {
         for (const [name, config] of Object.entries(data.servers)) {
@@ -56,12 +62,13 @@ export class MCPHub {
 
   /** Persist server configurations to disk */
   private saveConfig() {
+    if (!this.configPath) return;
     const servers: Record<string, MCPServerConfig> = {};
     for (const [name, config] of this.configs) {
       servers[name] = config;
     }
     try {
-      writeFileSync(CONFIG_PATH, JSON.stringify({ servers }, null, 2));
+      writeFileSync(this.configPath, JSON.stringify({ servers }, null, 2));
     } catch (err) {
       console.error('[MCPHub] Failed to save config:', err);
     }
