@@ -6,5 +6,6 @@ dist/
 mcp-servers.json
 channels.json
 sessions.json
+server/data/
 server.log
 .claude/
